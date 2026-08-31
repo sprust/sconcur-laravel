@@ -28,7 +28,12 @@ class TaskPoolLock
     {
         $directory = dirname($this->path);
 
-        if (!is_dir($directory) && !mkdir($directory, 0o775, true) && !is_dir($directory)) {
+        // Silenced like the fopen below, and for the same reason: the pool runs inside a
+        // booted Laravel, whose error handler turns a warning into an ErrorException. An
+        // unsilenced mkdir therefore throws out of here instead of reaching the line
+        // that explains what went wrong, which is the whole point of telling this case
+        // apart from a lock somebody else holds.
+        if (!is_dir($directory) && !@mkdir($directory, 0o775, true) && !is_dir($directory)) {
             return $this->failed('cannot create ' . $directory);
         }
 
