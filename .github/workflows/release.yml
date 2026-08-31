@@ -103,10 +103,17 @@ jobs:
         run: |
           version="$(jq -r '.packages[] | select(.name=="sconcur/sconcur") | .version' composer.lock | sed 's/^v//')"
           test -n "$version"
+
+          # Downloaded to a writable path and moved in with sudo: on the runner the
+          # extension directory and php.ini belong to root, and curl writing straight
+          # there fails after fetching the whole file.
           curl -fSL --retry 5 --retry-delay 3 --retry-all-errors \
             "https://github.com/sprust/sconcur/releases/download/v${version}/sconcur.so" \
-            -o "$(php-config --extension-dir)/sconcur.so"
-          echo "extension=sconcur.so" >> "$(php -r 'echo php_ini_loaded_file();')"
+            -o "${RUNNER_TEMP}/sconcur.so"
+
+          sudo mv "${RUNNER_TEMP}/sconcur.so" "$(php-config --extension-dir)/sconcur.so"
+          echo "extension=sconcur.so" | sudo tee -a "$(php -r 'echo php_ini_loaded_file();')" > /dev/null
+
           php -m | grep -qx sconcur
 
       - run: vendor/bin/php-cs-fixer fix --config php-cs-fixer.dist.php --dry-run --diff
