@@ -1,0 +1,11 @@
+{
+    "name": "sconcur/sconcur-laravel-demo",
+    "description": "Demo application for the SConcur Laravel package; not a published package",
+    "license": "MIT",
+    "type": "project",
+    "autoload": {
+        "psr-4": {
+            "Demo\\App\\": "app/"
+        }
+    }
+}
