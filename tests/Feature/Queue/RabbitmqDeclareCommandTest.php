@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel\Tests\Feature\Queue;
 
-use Illuminate\Testing\PendingCommand;
 use PHPUnit\Framework\Attributes\Test;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
 
@@ -22,11 +21,9 @@ class RabbitmqDeclareCommandTest extends BaseTestCase
     {
         config()->set('sconcur.queue.rabbitmq.queues', []);
 
-        $command = $this->artisan('sconcur:rabbitmq:declare');
-
-        assert($command instanceof PendingCommand);
-
-        $command->expectsOutputToContain('No queues configured')->assertFailed();
+        $this->command('sconcur:rabbitmq:declare')
+            ->expectsOutputToContain('No queues configured')
+            ->assertFailed();
     }
 
     /**
@@ -38,10 +35,8 @@ class RabbitmqDeclareCommandTest extends BaseTestCase
     {
         config()->set('sconcur.queue.rabbitmq.queues', ['tests']);
 
-        $command = $this->artisan('sconcur:rabbitmq:declare', ['--connection' => 'sync']);
-
-        assert($command instanceof PendingCommand);
-
-        $command->expectsOutputToContain('is not a SConcur AMQP queue')->assertFailed();
+        $this->command('sconcur:rabbitmq:declare', ['--connection' => 'sync'])
+            ->expectsOutputToContain('is not a SConcur AMQP queue')
+            ->assertFailed();
     }
 }

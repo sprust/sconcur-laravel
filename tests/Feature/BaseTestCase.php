@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Tests\Feature;
 
 use Illuminate\Foundation\Application;
+use Illuminate\Testing\PendingCommand;
 use Orchestra\Testbench\Concerns\WithWorkbench;
 use Orchestra\Testbench\TestCase;
 use SConcur\Laravel\SConcurServiceProvider;
@@ -31,5 +32,21 @@ abstract class BaseTestCase extends TestCase
         assert($this->app !== null);
 
         return $this->app;
+    }
+
+    /**
+     * artisan() is typed PendingCommand|int — it returns the exit code once the command
+     * has been run. Every caller here wants the pending one, to assert on before
+     * running it.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    protected function command(string $name, array $arguments = []): PendingCommand
+    {
+        $command = $this->artisan($name, $arguments);
+
+        assert($command instanceof PendingCommand);
+
+        return $command;
     }
 }

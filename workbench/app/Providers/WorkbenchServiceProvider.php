@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Workbench\App\Providers;
 
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Workbench\App\Tasks\CountingTask;
 use Workbench\App\Tasks\FailingTask;
@@ -23,5 +24,20 @@ class WorkbenchServiceProvider extends ServiceProvider
         $this->app->singleton(CountingTask::class);
         $this->app->singleton(IdleTask::class);
         $this->app->bind(FailingTask::class);
+    }
+
+    /**
+     * The routes are registered here rather than left to testbench's route discovery,
+     * which did not pick them up: what the tests need is one known path to send a
+     * request at, and a provider saying so plainly beats depending on how the discovery
+     * is configured.
+     */
+    public function boot(): void
+    {
+        $routes = realpath(__DIR__ . '/../../routes/api.php');
+
+        assert($routes !== false);
+
+        Route::group([], $routes);
     }
 }
