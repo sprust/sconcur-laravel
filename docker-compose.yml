@@ -68,6 +68,9 @@ services:
       - ./docker/supervisor/conf/supervisor.conf:/etc/supervisor/conf.d/supervisord.conf
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Migrates and declares before handing over to supervisor, so a restart of the
+    # tmpfs-backed backends does not leave the demo pointing at a schema that is gone.
+    entrypoint: ["/app/docker/workers/entrypoint.sh"]
     command: supervisord -n
 
   # Both backends keep their data in tmpfs: the demo and the tests start from a clean

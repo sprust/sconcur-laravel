@@ -68,11 +68,10 @@ restart:
 workers-restart:
 	$(DOCKER_COMPOSE) restart $(WORKERS_SERVICE)
 
-# Puts the demo's state back: the schema and the queue it consumes. MySQL and RabbitMQ
-# keep everything in tmpfs, so a container of theirs that stopped or was recreated —
-# `make restart`, `make down`, a plain `docker compose restart` — comes back empty, and
-# every page 500s on a missing table. This is the way back; `make setup` does the same
-# steps inline.
+# Puts the demo's state back by hand: the schema and the queue it consumes. The workers
+# container does this from its entrypoint on every start, so it is rarely needed — reach
+# for it when the backends came up after the master did, and the entrypoint's attempt
+# was the one that failed.
 demo-reset:
 	make demo-art c="migrate --force"
 	make queues-declare

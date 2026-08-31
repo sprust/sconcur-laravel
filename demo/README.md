@@ -45,6 +45,14 @@ flowchart TB
 All three groups are pools of one master, configured in `demo/config/sconcur.php`.
 The master's telemetry panel is what the page's top section reads.
 
+## State after a restart
+
+MySQL and RabbitMQ keep their data in tmpfs, so stopping either container leaves the
+schema and the queue gone. The workers container migrates and declares from its
+entrypoint before starting the master, so a restart repairs itself — both commands are
+idempotent, and a failure there is reported without keeping the container down. To do it
+by hand: `make demo-reset`.
+
 ## Endpoints
 
 | Endpoint | What it shows |
