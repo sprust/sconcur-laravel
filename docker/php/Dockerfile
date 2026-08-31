@@ -31,15 +31,19 @@ RUN curl -fSL --connect-timeout 10 --retry 3 \
 # itself requires (ext-msgpack: 3.0.1). Pinned exactly, like that constraint.
 RUN pie install msgpack/msgpack-php:3.0.1
 
-# pcntl — signal handling of the master and of every long-lived worker; pdo_mysql — the
-# PDO connection sconcur_mysql is compared against; sockets — required by the library's
-# transport dependencies.
+# pcntl — signal handling of the master and of every long-lived worker. pdo_mysql — the
+# PDO connection sconcur_mysql is compared against, in the demo and in the tests. zip —
+# composer extracts dist archives with it; without it, it shells out to unzip, which
+# works but is slower.
+#
+# Deliberately not here: sockets and bcmath. Nothing requires either — they appear only
+# as `suggest` in third-party packages (monolog's syslog-over-UDP, uuid/uri maths), and
+# the library's own telemetry writes to its unix socket through stream_socket_client,
+# which is a stream, not ext-sockets. Check with `composer why ext-<name>` before adding
+# one back.
 RUN docker-php-ext-install \
-        bcmath \
         pcntl \
-        pdo \
         pdo_mysql \
-        sockets \
         zip
 
 # The sconcur Go extension, pinned to the sconcur/sconcur version composer.lock
