@@ -259,13 +259,38 @@
 
     const show = (id, data) => { $(id).textContent = JSON.stringify(data, null, 2); };
 
+    // Every answer goes through here, because during a roll the page is talking to a
+    // pool that is being replaced: nginx answers 502 with an HTML error page, and
+    // response.json() on that reports a parse error about an unexpected '<' — which
+    // tells the reader nothing about what is actually happening.
+    const fetchJson = async (url, options = {}) => {
+        let response;
+
+        try {
+            response = await fetch(url, options);
+        } catch (error) {
+            throw new Error('unreachable — the workers may be rolling');
+        }
+
+        const body = await response.text();
+
+        try {
+            return JSON.parse(body);
+        } catch (error) {
+            if (response.status === 502 || response.status === 503 || response.status === 504) {
+                throw new Error(`the workers are rolling (${response.status})`);
+            }
+
+            throw new Error(`${response.status} ${response.statusText || 'unexpected answer'}`);
+        }
+    };
+
     const request = async (id, url, options = {}) => {
         $(id).textContent = 'running…';
         try {
-            const response = await fetch(url, options);
-            show(id, await response.json());
+            show(id, await fetchJson(url, options));
         } catch (error) {
-            $(id).textContent = String(error);
+            $(id).textContent = error.message;
         }
     };
 
@@ -343,16 +368,20 @@
             ])).join('');
     };
 
+    // A failed poll leaves the last numbers on screen and says so in the status line,
+    // rather than blanking the tables: a roll takes a few seconds, and a page that
+    // empties itself and fills back up is harder to read than one that holds still and
+    // tells you it is waiting.
     const poll = async () => {
         try {
             const [telemetry, heartbeats] = await Promise.all([
-                fetch('/api/telemetry').then((response) => response.json()),
-                fetch('/api/heartbeats').then((response) => response.json()),
+                fetchJson('/api/telemetry'),
+                fetchJson('/api/heartbeats'),
             ]);
             renderTelemetry(telemetry);
             show('out-heartbeats', heartbeats);
         } catch (error) {
-            $('telemetry-state').innerHTML = `<span class="bad">${error}</span>`;
+            $('telemetry-state').innerHTML = `<span class="warn">${error.message}</span>`;
         }
     };
 
