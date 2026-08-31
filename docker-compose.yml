@@ -1,0 +1,122 @@
+services:
+  # The only published entry point of the demo. Proxies to the http pool of the SConcur
+  # master; that port is deliberately not published itself.
+  nginx:
+    container_name: scl-nginx
+    restart: unless-stopped
+    image: nginx:alpine
+    depends_on:
+      - workers
+    environment:
+      # substituted into docker/nginx/templates/default.conf.template on startup
+      SCONCUR_HTTP_PORT: ${SCONCUR_HTTP_PORT:-28080}
+    ports:
+      - ${APP_PORT:-48081}:80
+    volumes:
+      - ./docker/nginx/templates:/etc/nginx/templates
+
+  # CLI only: composer, artisan, phpunit, the analyzers. There is no php-fpm in this
+  # repository — HTTP is served by the SConcur master in `workers`.
+  php:
+    container_name: scl-php
+    restart: on-failure
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: php_cli
+      args:
+        - USER_ID=${DOCKER_USER_ID}
+        - GROUP_ID=${DOCKER_GROUP_ID}
+    working_dir: /app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - ./docker/php/conf/php.ini:/usr/local/etc/php/conf.d/docker.ini
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["sh", "-c", "echo \"Starting infinite wait loop...\"; while sleep 1; do :; done"]
+
+  # Supervisor keeps the SConcur master up; the master keeps its own pools up — http,
+  # rabbitmq and tasks, one group each (demo/config/sconcur.php).
+  workers:
+    container_name: scl-workers
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: php_workers
+      args:
+        - USER_ID=${DOCKER_USER_ID}
+        - GROUP_ID=${DOCKER_GROUP_ID}
+    working_dir: /app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      # The master's telemetry panel. The http pool's own port stays unpublished:
+      # nginx is what reaches it.
+      - ${SCONCUR_PANEL_DOCKER_PORT:-38081}:${SCONCUR_PANEL_PORT:-28081}
+    volumes:
+      - ./:/app
+      - ./docker/php/conf/php-workers.ini:/usr/local/etc/php/conf.d/docker.ini
+      - ./docker/supervisor/conf/supervisor.conf:/etc/supervisor/conf.d/supervisord.conf
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: supervisord -n
+
+  # Both backends keep their data in tmpfs: the demo and the tests start from a clean
+  # state on every recreate, and nothing accumulates on disk. To run against real
+  # disk-backed storage instead, comment the tmpfs block, uncomment the named-volume
+  # mount and the top-level `volumes:` section.
+  mysql:
+    container_name: scl-mysql
+    restart: unless-stopped
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - ${DB_DOCKER_PORT:-33306}:3306
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${DB_ROOT_PASSWORD}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    tmpfs:
+      - /var/lib/mysql:rw,noexec,nosuid,size=512m
+    # volumes:
+    #   - mysql-data:/var/lib/mysql
+
+  rabbitmq:
+    container_name: scl-rabbitmq
+    restart: unless-stopped
+    image: rabbitmq:4.1-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - ${RABBITMQ_DOCKER_PORT:-35673}:5672
+      - ${RABBITMQ_MANAGEMENT_DOCKER_PORT:-45672}:15672
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    tmpfs:
+      - /var/lib/rabbitmq:rw,noexec,nosuid,size=256m
+    # volumes:
+    #   - rabbitmq-data:/var/lib/rabbitmq
+
+# volumes:
+#   mysql-data:
+#   rabbitmq-data:
