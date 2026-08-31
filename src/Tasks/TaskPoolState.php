@@ -60,9 +60,32 @@ class TaskPoolState
         return $this->active[$name] ?? false;
     }
 
+    /**
+     * Parks the task: it stops ticking but keeps its coroutine, so a relaunch can put it
+     * back to work. Without the coroutine there would be nothing left to read the
+     * relaunch request — which is what made `sconcur:tasks:restart --task=NAME` unable
+     * to undo `sconcur:tasks:stop --task=NAME`.
+     */
     public function deactivate(string $name): void
     {
         $this->active[$name] = false;
+    }
+
+    /** Puts a parked task back into service. */
+    public function activate(string $name): void
+    {
+        $this->active[$name] = true;
+    }
+
+    /**
+     * The tasks still ticking. Empty means there is nothing left to supervise, which is
+     * how a pool whose tasks were all stopped one by one comes to an end.
+     *
+     * @return list<string>
+     */
+    public function activeNames(): array
+    {
+        return array_keys(array_filter($this->active));
     }
 
     public function stopAll(): void
@@ -122,6 +145,20 @@ class TaskPoolState
     public function interruptFor(string $name): Closure
     {
         return fn(): bool => !$this->isActive($name) || ($this->relaunch[$name] ?? false);
+    }
+
+    /**
+     * What ends a parked task's wait: something to come back for, or the pool going away.
+     * The interrupt above cannot serve here — it fires on exactly the condition a parked
+     * task is already in, which would turn the wait into a busy loop.
+     *
+     * @return Closure(): bool
+     */
+    public function parkInterruptFor(string $name): Closure
+    {
+        return fn(): bool => $this->stopRequested
+            || $this->isActive($name)
+            || ($this->relaunch[$name] ?? false);
     }
 
     public function hardDeadlineAt(): ?float

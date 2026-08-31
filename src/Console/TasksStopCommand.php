@@ -13,9 +13,11 @@ use SConcur\Laravel\Tasks\Control\ControlCommandDto;
  * Stops the pool, or one of its tasks, from any process that shares the application's
  * cache.
  *
- * Stopping one task lasts as long as the process does: the pool acts on commands posted
- * after it started, so a restart brings the task back. Turning a task off for good is a
- * matter of config, not of a command.
+ * Stopping one task parks it: it stops ticking, keeps its coroutine and waits, so
+ * `sconcur:tasks:restart --task=NAME` can put it back. Nothing about it is persisted —
+ * the pool acts on commands posted after it started, so a fresh process starts with
+ * every configured task ticking. Turning a task off for good is a matter of config, not
+ * of a command.
  */
 class TasksStopCommand extends Command
 {

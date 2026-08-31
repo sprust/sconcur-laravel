@@ -113,13 +113,13 @@ curl -sS -X POST localhost:48081/api/jobs \
 # The task pool, controlled from another container through a cache key rather than a pid.
 # `stop` without --task ends the pool's process; its group is restartPolicy=on-failure,
 # so a clean exit is left down on purpose and `make sconcur-reload` is what brings it
-# back. `stop --task=NAME` deactivates one task for the life of the process, and
-# `restart --task=NAME` does not undo that — a relaunch request is read inside the
-# task's own loop, which a deactivated task no longer has. Reload is the way back from
-# either.
+# back.
 make tasks-stop                                    # the heartbeat counter freezes
 make sconcur-reload                                # it moves again, in a fresh process
-make demo-art c='sconcur:tasks:stop --task=heartbeat'   # one task, pool keeps running
+
+# One task at a time: stop parks it and the pool keeps running, restart brings it back.
+make demo-art c='sconcur:tasks:stop --task=heartbeat'
+make demo-art c='sconcur:tasks:restart --task=heartbeat'
 
 # Rolling reload: the workers still listening keep the port served.
 make sconcur-reload

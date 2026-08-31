@@ -77,24 +77,70 @@ class TaskPoolStateTest extends BaseTestCase
     }
 
     /**
-     * Characterisation, not endorsement: a relaunch request is only read inside a task's
-     * own loop (TaskPool runs `while ($state->isActive($name))`), and a deactivated task
-     * no longer has one. So `sconcur:tasks:restart --task=NAME` does not undo
-     * `sconcur:tasks:stop --task=NAME` — the pool has to be rolled to get the task back.
-     *
-     * The README reads as though stop and restart were a pair. Whichever way that is
-     * settled — the pool learning to reactivate, or the docs saying what happens — this
-     * test is the one to update, and until then it keeps the behaviour from drifting
-     * unnoticed.
+     * A parked task can be put back into service, which is what makes
+     * `sconcur:tasks:restart --task=NAME` able to undo `sconcur:tasks:stop --task=NAME`.
+     * It used to be unable to: deactivating ended the task's coroutine, and the relaunch
+     * request is only read from inside that coroutine's loop.
      */
     #[Test]
-    public function aRelaunchDoesNotReactivateAStoppedTask(): void
+    public function aParkedTaskCanBeActivatedAgain(): void
     {
         $state = new TaskPoolState(['first']);
 
         $state->deactivate('first');
-        $state->requestRelaunch('first');
 
         self::assertFalse($state->isActive('first'));
+
+        $state->activate('first');
+
+        self::assertTrue($state->isActive('first'));
+    }
+
+    /**
+     * With every task parked there is nothing left to tick, and the controller ends the
+     * pool on that — the way it always did when tasks were stopped one by one.
+     */
+    #[Test]
+    public function activeNamesIsEmptyWhenEveryTaskIsParked(): void
+    {
+        $state = new TaskPoolState(['first', 'second']);
+
+        self::assertSame(['first', 'second'], $state->activeNames());
+
+        $state->deactivate('first');
+
+        self::assertSame(['second'], $state->activeNames());
+
+        $state->deactivate('second');
+
+        self::assertSame([], $state->activeNames());
+    }
+
+    /**
+     * A parked task waits on its own interrupt: the ticking one fires on exactly the
+     * condition a parked task is already in, so waiting on it would spin.
+     */
+    #[Test]
+    public function aParkedTaskWakesOnARelaunchAStopOrBeingActivated(): void
+    {
+        $state = new TaskPoolState(['first']);
+
+        $state->deactivate('first');
+
+        $wake = $state->parkInterruptFor('first');
+
+        self::assertFalse($wake(), 'a parked task with nothing to come back for keeps waiting');
+
+        $state->requestRelaunch('first');
+
+        self::assertTrue($wake());
+
+        $state->takeRelaunch('first');
+
+        self::assertFalse($wake());
+
+        $state->stopAll();
+
+        self::assertTrue($wake());
     }
 }

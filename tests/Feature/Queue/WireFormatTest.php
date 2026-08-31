@@ -25,9 +25,7 @@ class WireFormatTest extends BaseQueueTestCase
     {
         $this->queue()->pushRaw('{"job":"probe"}', $this->queueName);
 
-        self::assertSame(1, $this->queue()->size($this->queueName));
-
-        $job = $this->queue()->pop($this->queueName);
+        $job = $this->waitForJob();
 
         self::assertInstanceOf(Job::class, $job);
         self::assertSame('{"job":"probe"}', $job->getRawBody());
@@ -66,13 +64,32 @@ class WireFormatTest extends BaseQueueTestCase
     {
         $this->queue()->pushRaw('{"job":"probe"}', $this->queueName);
 
-        $job = $this->queue()->pop($this->queueName);
+        $job = $this->waitForJob();
 
         self::assertInstanceOf(Job::class, $job);
 
         $job->delete();
 
-        self::assertSame(0, $this->queue()->size($this->queueName));
+        self::assertTrue($this->waitForSize(0), 'the queue did not empty out');
+    }
+
+    /**
+     * The broker's message count is what `size()` reports, and it settles a moment after
+     * the publish rather than with it — hence the wait. Asserting it the instant the
+     * publish returns is a race, and one that passes often enough to look fine.
+     */
+    #[Test]
+    public function theQueueReportsWhatIsWaitingInIt(): void
+    {
+        $this->queue()->pushRaw('{"job":"probe"}', $this->queueName);
+
+        self::assertTrue($this->waitForSize(1), 'the publish never showed up in the count');
+
+        $job = $this->waitForJob();
+
+        self::assertInstanceOf(Job::class, $job);
+
+        $job->delete();
     }
 
     #[Test]
@@ -100,6 +117,21 @@ class WireFormatTest extends BaseQueueTestCase
         self::assertSame('{"job":"delayed"}', $job->getRawBody());
 
         $job->delete();
+    }
+
+    protected function waitForSize(int $expected, int $seconds = 3): bool
+    {
+        $deadline = microtime(true) + $seconds;
+
+        while (microtime(true) < $deadline) {
+            if ($this->queue()->size($this->queueName) === $expected) {
+                return true;
+            }
+
+            usleep(100_000);
+        }
+
+        return false;
     }
 
     protected function waitForJob(int $seconds = 3): ?Job

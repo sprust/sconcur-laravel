@@ -164,7 +164,13 @@ class TaskPool
     }
 
     /**
-     * One task's loop: tick, pause, repeat, until the state says it is done.
+     * One task's loop: tick, pause, repeat, until the pool is stopped.
+     *
+     * A task stopped by name parks instead of ending: it keeps its coroutine and waits,
+     * so `sconcur:tasks:restart --task=NAME` has something to wake. Ending the coroutine
+     * left nothing to read the relaunch request, and the restart quietly did nothing.
+     * The pool as a whole still comes to an end when no task is left ticking — see
+     * TaskPoolController::finished().
      *
      * Nothing may escape here except a deliberate unwind. WaitGroup::iterate() rethrows
      * the first exception any member raises and stops the group on the way out, so one
@@ -182,8 +188,24 @@ class TaskPool
             // suspend on the adder's stack.
             Scheduler::get()->switch(0);
 
+            $parked = false;
+
             try {
-                while ($state->isActive($name)) {
+                while (!$state->isStopRequested()) {
+                    if (!$state->isActive($name)) {
+                        if (!$parked) {
+                            $this->logger->log($name, 'parked');
+
+                            $parked = true;
+                        }
+
+                        $this->park($state, $name, $definition);
+
+                        continue;
+                    }
+
+                    $parked = false;
+
                     // Before the tick as well as after it. A relaunch posted while the
                     // task was paused ends the pause, and taking it only afterwards
                     // would spend one more tick on the very instance the operator asked
@@ -208,6 +230,26 @@ class TaskPool
                 $this->logger->log($name, 'stopped');
             }
         };
+    }
+
+    /**
+     * A parked task's wait: it comes back if a relaunch arrives, and otherwise sleeps
+     * the task's own idle interval. The instance is dropped on the way back in, so a
+     * restarted task starts from a fresh one — which is what restarting it means.
+     */
+    protected function park(TaskPoolState $state, string $name, TaskDefinitionDto $definition): void
+    {
+        if ($state->takeRelaunch($name)) {
+            $this->registry->forget($name);
+
+            $state->activate($name);
+
+            $this->logger->log($name, 'restarted');
+
+            return;
+        }
+
+        $this->sleeper->sleep($definition->idle, $state->parkInterruptFor($name));
     }
 
     protected function tick(string $name): TickResultEnum

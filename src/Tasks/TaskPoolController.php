@@ -220,11 +220,22 @@ class TaskPoolController
         $running = $this->state->runningNames();
 
         if ($running === []) {
-            // Also the way a pool ends when its tasks were stopped one by one: with
-            // nothing left to tick there is nothing left to supervise.
             $this->log('all tasks stopped');
 
             return true;
+        }
+
+        // The same ending by the other road: a task stopped by name parks rather than
+        // finishing, so that a restart has something to wake, and its coroutine stays in
+        // `running`. With every task parked there is nothing left to tick and so nothing
+        // left to supervise — which is how a pool whose tasks were stopped one by one
+        // still comes to an end.
+        if (!$this->state->isStopRequested() && $this->state->activeNames() === []) {
+            $this->log('all tasks stopped');
+
+            $this->requestStop();
+
+            return false;
         }
 
         $deadline = $this->state->hardDeadlineAt();
