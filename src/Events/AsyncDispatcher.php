@@ -58,6 +58,9 @@ class AsyncDispatcher extends Dispatcher
         }
     }
 
+    /**
+     * @return array<array-key, mixed>|null
+     */
     public function dispatch($event, $payload = [], $halt = false): ?array
     {
         if ($this->async && $this->shouldDeferForContext($event)) {

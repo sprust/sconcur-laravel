@@ -51,7 +51,11 @@ class TaskPoolTelemetry
 
     protected float $dueAt = 0;
 
-    /** Previous /proc/self/stat sample: [cpu seconds, wall clock], for the CPU delta. */
+    /**
+     * Previous /proc/self/stat sample: [cpu seconds, wall clock], for the CPU delta.
+     *
+     * @var array{0: float, 1: float}|null
+     */
     protected ?array $previousCpu = null;
 
     public function __construct(

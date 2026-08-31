@@ -53,7 +53,11 @@ class CoroutineTransactionsManager extends DatabaseTransactionsManager
         $this->delegate()->begin($connection, $level);
     }
 
-    /** @inheritDoc */
+    /**
+     * @inheritDoc
+     *
+     * @return array<array-key, mixed>
+     */
     public function commit($connection, $levelBeingCommitted, $newTransactionLevel)
     {
         return $this->delegate()->commit($connection, $levelBeingCommitted, $newTransactionLevel);

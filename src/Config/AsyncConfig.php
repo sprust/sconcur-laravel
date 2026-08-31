@@ -30,6 +30,9 @@ class AsyncConfig extends Repository
         $this->async = true;
     }
 
+    /**
+     * @param array<string, mixed>|string $key
+     */
     public function set($key, $value = null): void
     {
         if (!$this->async) {
@@ -50,6 +53,9 @@ class AsyncConfig extends Repository
         $ctx->set(self::CTX_KEY, $overlay, replace: true);
     }
 
+    /**
+     * @param list<string>|string $key
+     */
     public function get($key, $default = null)
     {
         if (!$this->async) {
@@ -99,6 +105,9 @@ class AsyncConfig extends Repository
         return Arr::has($this->items, $key);
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function all(): array
     {
         if (!$this->async) {

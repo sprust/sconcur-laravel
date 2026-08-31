@@ -27,6 +27,9 @@ class AsyncViewFactory extends Factory
         $this->async = true;
     }
 
+    /**
+     * @param array<string, mixed>|string $key
+     */
     public function share($key, $value = null)
     {
         if (!$this->async) {
@@ -51,6 +54,9 @@ class AsyncViewFactory extends Factory
         return $value;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function getShared()
     {
         if (!$this->async) {

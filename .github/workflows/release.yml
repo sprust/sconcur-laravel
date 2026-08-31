@@ -1,0 +1,184 @@
+name: Tests & Release
+
+on:
+  # Every non-draft PR into master runs the checks. No `paths` filter here: a PR is
+  # cheap to over-test and the run is the branch protection signal.
+  pull_request:
+    branches:
+      - master
+    types: [ opened, synchronize, reopened, ready_for_review ]
+
+  # Pushes and merges into master run the same checks and then release if the version
+  # changed. Test & release only when something that affects the checks or the resolved
+  # version actually changes. A push touching none of these paths (e.g. docs-only) skips
+  # the whole workflow. Keep this list in sync with new inputs — an omitted path means no
+  # release on a real change.
+  push:
+    branches:
+      - master
+    paths:
+      - '**.php'                        # src, tests, workbench, demo, php-cs-fixer.dist.php
+      - 'composer.json'                 # also the version source (see "Resolve release version")
+      - 'composer.lock'
+      - 'phpunit.xml'
+      - 'phpstan.neon'
+      - 'testbench.yaml'
+      - 'makefile'
+      - 'docker/**'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - '.github/workflows/release.yml'
+
+concurrency:
+  # PR runs supersede each other (a new push to the branch makes the previous run
+  # pointless); master runs never cancel, so a release is never interrupted half-way.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Draft PRs are skipped; marking one ready fires `ready_for_review` and runs them.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+
+    # The integration tests talk to live backends, the same two the compose file raises
+    # locally. Ports and credentials match phpunit.xml.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: _scl_root_password_567
+          MYSQL_DATABASE: demo
+          MYSQL_USER: scl_user
+          MYSQL_PASSWORD: _scl_password_567
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -p_scl_root_password_567"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+
+      rabbitmq:
+        image: rabbitmq:4.1-management
+        env:
+          RABBITMQ_DEFAULT_USER: scl_user
+          RABBITMQ_DEFAULT_PASS: _scl_password_567
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd="rabbitmq-diagnostics -q ping"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+
+    name: PHP 8.4 - Laravel 12
+
+    env:
+      DB_HOST: 127.0.0.1
+      SCONCUR_RABBITMQ_DSN: amqp://scl_user:_scl_password_567@127.0.0.1:5672/%2f
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: msgpack-3.0.1, pdo_mysql, pcntl, sockets, bcmath
+          tools: composer:v2
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            vendor
+          key: ${{ runner.os }}-php-8.4-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-php-8.4-
+
+      - run: composer install --prefer-dist --no-interaction
+
+      # The .so and the PHP side cross a protocol boundary that changes with the
+      # version, so the extension is taken from the release matching composer.lock —
+      # the same rule docker/php/Dockerfile follows.
+      - name: Install the sconcur extension
+        run: |
+          version="$(jq -r '.packages[] | select(.name=="sconcur/sconcur") | .version' composer.lock | sed 's/^v//')"
+          test -n "$version"
+          curl -fSL --retry 5 --retry-delay 3 --retry-all-errors \
+            "https://github.com/sprust/sconcur/releases/download/v${version}/sconcur.so" \
+            -o "$(php-config --extension-dir)/sconcur.so"
+          echo "extension=sconcur.so" >> "$(php -r 'echo php_ini_loaded_file();')"
+          php -m | grep -qx sconcur
+
+      - run: vendor/bin/php-cs-fixer fix --config php-cs-fixer.dist.php --dry-run --diff
+      - run: vendor/bin/phpstan analyse --memory-limit=1G
+      - run: vendor/bin/phpunit
+
+  release:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Releases happen on master only — a PR run stops after the checks.
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history + all tags: needed to detect an already-released version and to
+          # resolve the previous version tag for strict version-to-version release notes.
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: version
+        run: |
+          version=$(jq -r '.version // empty' composer.json)
+
+          if [ -z "$version" ]; then
+            echo "::error::composer.json has no \"version\" field; it is the release version source."
+            exit 1
+          fi
+
+          echo "composer.json version: $version"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create versioned release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+
+          # Published version tags are immutable: moving a tag that Packagist (and
+          # consumers) already resolved changes a released version's source reference,
+          # which Packagist blocks. If the tag already exists on origin, this version was
+          # already released — skip. This is also how "did the version change?" is
+          # answered: bumping "version" in composer.json produces an unreleased tag on the
+          # next push, and every other push resolves to a tag that already exists.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::notice::$tag already released; skipping. Bump \"version\" in composer.json to release again."
+            exit 0
+          fi
+
+          # Previous version tag = the highest v* tag strictly below the current one, so
+          # the notes cover strictly the previous version → this version. Empty on the
+          # very first versioned release, where we let --generate-notes fall back to its
+          # automatic base.
+          previous_tag=$( { git tag -l 'v*'; echo "$tag"; } | sort -V -u \
+            | awk -v current="$tag" '$0 == current { print previous; exit } { previous = $0 }' )
+
+          notes_args=(--generate-notes)
+
+          if [ -n "$previous_tag" ]; then
+            echo "Generating notes from $previous_tag to $tag."
+            notes_args+=(--notes-start-tag "$previous_tag")
+          else
+            echo "No previous version tag found; using automatic notes base."
+          fi
+
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            "${notes_args[@]}" \
+            --latest

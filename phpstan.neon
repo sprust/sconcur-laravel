@@ -1,0 +1,8 @@
+parameters:
+    paths:
+        - ./src
+        - ./tests
+        - ./workbench
+        - ./demo/app
+
+    level: 8

@@ -26,6 +26,9 @@ class ScopedServiceProxy
     ) {
     }
 
+    /**
+     * @param list<mixed> $args
+     */
     public function __call(string $method, array $args): mixed
     {
         return ($this->resolver)()->$method(...$args);

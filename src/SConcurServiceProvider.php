@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel;
 
+use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Container\Container;
@@ -269,8 +270,12 @@ class SConcurServiceProvider extends ServiceProvider
         $this->app->singleton('router', fn($app) => new AsyncRouter($app['events'], $app));
 
         // A kernel resolved against the old router must be rebuilt with the new one.
-        if ($this->app->resolved(Kernel::class)) {
-            $this->app->forgetInstance(Kernel::class);
+        // forgetInstance() belongs to the container, not to the Application contract the
+        // provider's $app is typed as — hence the check rather than an assertion.
+        $app = $this->app;
+
+        if ($app instanceof IlluminateContainer && $app->resolved(Kernel::class)) {
+            $app->forgetInstance(Kernel::class);
         }
     }
 

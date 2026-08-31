@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_KEY" value="base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+
+        <!-- The integration tests talk to the live backends the compose file raises.
+             They are reachable under these names from inside the php container. -->
+        <env name="DB_CONNECTION" value="sconcur_mysql"/>
+        <env name="DB_HOST" value="scl-mysql"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_DATABASE" value="demo"/>
+        <env name="DB_USERNAME" value="scl_user"/>
+        <env name="DB_PASSWORD" value="_scl_password_567"/>
+
+        <env name="SCONCUR_RABBITMQ_DSN" value="amqp://scl_user:_scl_password_567@scl-rabbitmq:5672/%2f"/>
+        <env name="SCONCUR_RABBITMQ_QUEUE" value="tests"/>
+    </php>
+</phpunit>

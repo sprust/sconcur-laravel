@@ -68,7 +68,13 @@ class Connection extends MySqlConnection
 
     // ---------------------------------------------------------------- statements
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     *
+     * @param array<array-key, mixed> $bindings
+     *
+     * @return list<object>
+     */
     public function select($query, $bindings = [], $useReadPdo = true)
     {
         return $this->run($query, $bindings, function ($query, $bindings) {
@@ -85,6 +91,8 @@ class Connection extends MySqlConnection
 
     /**
      * {@inheritDoc}
+     *
+     * @param array<array-key, mixed> $bindings
      *
      * @return Generator<int, object>
      */
@@ -103,7 +111,11 @@ class Connection extends MySqlConnection
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     *
+     * @param array<array-key, mixed> $bindings
+     */
     public function statement($query, $bindings = [])
     {
         return $this->run($query, $bindings, function ($query, $bindings) {
@@ -119,7 +131,11 @@ class Connection extends MySqlConnection
         });
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     *
+     * @param array<array-key, mixed> $bindings
+     */
     public function affectingStatement($query, $bindings = [])
     {
         return $this->run($query, $bindings, function ($query, $bindings) {
@@ -141,6 +157,8 @@ class Connection extends MySqlConnection
      * The id goes into the coroutine context rather than a property, so the
      * getLastInsertId() that MySqlProcessor::processInsertGetId() calls right
      * after cannot read a neighbouring coroutine's insert.
+     *
+     * @param array<array-key, mixed> $bindings
      */
     public function insert($query, $bindings = [], $sequence = null)
     {
@@ -186,6 +204,10 @@ class Connection extends MySqlConnection
      *
      * The feature returns one result set per query; there is no equivalent of
      * PDOStatement::nextRowset().
+     *
+     * @param array<array-key, mixed> $bindings
+     *
+     * @return list<mixed>
      */
     public function selectResultSets($query, $bindings = [], $useReadPdo = true)
     {
@@ -388,6 +410,8 @@ class Connection extends MySqlConnection
      * So it is let through untouched. Everything else is handed to the parent, which does
      * the wrapping — through a callback that rethrows what already happened, so the
      * statement is not run a second time.
+     *
+     * @param array<array-key, mixed> $bindings
      */
     protected function runQueryCallback($query, $bindings, Closure $callback)
     {
@@ -412,6 +436,8 @@ class Connection extends MySqlConnection
      * Upstream guards the retry with Connection::$transactions, which is always
      * zero here — the depth lives in the coroutine's stack. Without this override
      * a statement that failed inside a transaction could be replayed on its own.
+     *
+     * @param array<array-key, mixed> $bindings
      */
     protected function handleQueryException(QueryException $e, $query, $bindings, Closure $callback)
     {

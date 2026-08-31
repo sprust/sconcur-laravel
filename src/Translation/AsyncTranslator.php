@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel\Translation;
 
+use Countable;
 use Illuminate\Translation\Translator;
 use InvalidArgumentException;
 use SConcur\Context\Context;
@@ -60,6 +61,11 @@ class AsyncTranslator extends Translator
         return $this->getLocale();
     }
 
+    /**
+     * @param array<string, mixed> $replace
+     *
+     * @return array<array-key, mixed>|string
+     */
     public function get($key, array $replace = [], $locale = null, $fallback = true)
     {
         if ($this->async && $locale === null) {
@@ -69,6 +75,10 @@ class AsyncTranslator extends Translator
         return parent::get($key, $replace, $locale, $fallback);
     }
 
+    /**
+     * @param array<array-key, mixed>|Countable|float|int $number
+     * @param array<string, mixed>                        $replace
+     */
     public function choice($key, $number, array $replace = [], $locale = null)
     {
         if ($this->async && $locale === null) {
@@ -96,6 +106,9 @@ class AsyncTranslator extends Translator
         return parent::localeForChoice($key, $locale);
     }
 
+    /**
+     * @return array<array-key, string|null>
+     */
     protected function localeArray($locale)
     {
         if ($this->async && $locale === null) {

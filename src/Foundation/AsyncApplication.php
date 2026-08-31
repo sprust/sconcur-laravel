@@ -108,15 +108,22 @@ class AsyncApplication extends Application
         return parent::offsetGet($key);
     }
 
+    /**
+     * A callable $abstract has no alias and cannot be scoped, so it goes straight to the
+     * parent — the container accepts one, and asking getAlias() for its name would be a
+     * type error rather than a miss.
+     *
+     * @param array<array-key, mixed> $parameters
+     */
     protected function resolve($abstract, $parameters = [], $raiseEvents = true)
     {
-        $alias = $this->getAlias($abstract);
+        $alias = is_string($abstract) ? $this->getAlias($abstract) : null;
 
         if ($alias === 'request') {
             return $this->resolveRequest();
         }
 
-        $instance = $this->tryResolveScoped($alias);
+        $instance = $alias === null ? null : $this->tryResolveScoped($alias);
 
         if ($instance !== null) {
             return $instance;
@@ -154,7 +161,7 @@ class AsyncApplication extends Application
             return null;
         }
 
-        $ctxKey = $key?->value ?? $alias;
+        $ctxKey = $key !== null ? $key->value : $alias;
 
         $instance = $this->scopedFind($ctxKey);
 
@@ -172,7 +179,16 @@ class AsyncApplication extends Application
             }
 
             $concrete = $bindings[$alias]['concrete'];
-            $instance = $concrete instanceof Closure ? $concrete($this) : $this->build($concrete);
+
+            if ($concrete instanceof Closure) {
+                $instance = $concrete($this);
+            } elseif (is_string($concrete) && class_exists($concrete)) {
+                $instance = $this->build($concrete);
+            } else {
+                // A binding that is neither a factory nor a class name is nothing this
+                // can scope; the container knows what to do with it.
+                return null;
+            }
         }
 
         $this->scopedStore($ctxKey, $instance);

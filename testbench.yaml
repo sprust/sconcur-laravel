@@ -1,0 +1,4 @@
+workbench:
+  discovers:
+    config: true
+    routes: true
