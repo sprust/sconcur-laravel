@@ -29,7 +29,9 @@ implementations are.
 
 ## Further reading
 
-- [README.md](../README.md) — package overview, artisan commands, ENV reference
+- [README.md](../README.md) / [README.ru.md](../README.ru.md) — package overview,
+  installation, artisan commands, ENV reference. A bilingual pair: the two carry the
+  same sections in the same order, so a change to one belongs in the other
 - [docs/fiber-safe-laravel-bridge.ru.md](../docs/fiber-safe-laravel-bridge.ru.md) —
   why Octane's model is not fiber-safe and what replaces it here
 - [docs/sconcur-coroutine-context.ru.md](../docs/sconcur-coroutine-context.ru.md) —
@@ -73,7 +75,7 @@ make sconcur-reload     # rolling restart of the worker pools
 ```
 
 After `make setup` the demo application answers on `http://localhost:${APP_PORT}`
-(8080 by default).
+(48081 by default).
 
 `make test` needs the containers up: the tests load `sconcur.so` and the integration
 ones talk to the live MySQL and RabbitMQ.
@@ -188,10 +190,11 @@ Everything else is English, with no exceptions: code and its comments, PHPDoc,
 exception and log messages, test names and failure messages, shell scripts including
 everything they print, and commit messages.
 
-`README.md` is currently Russian — a legacy of the package living inside another
-repository. Bringing the documentation to the bilingual pair layout the neighbouring
-projects use (`X.md` / `X.ru.md` with a language switcher on the first line) is planned
-separately; until then do not add new Russian to files without a `.ru` infix.
+`README.md` and `README.ru.md` are the bilingual pair the neighbouring projects use:
+`X.md` / `X.ru.md`, with a language switcher on the first line. They mirror each other
+section for section — never add a section to one alone, and never let the two describe
+different behavior. Everything else under `docs/` is still Russian-only (`*.ru.md`);
+pairing it up is a separate job.
 
 ### Naming
 
