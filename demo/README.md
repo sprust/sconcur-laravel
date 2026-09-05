@@ -1,3 +1,5 @@
+English | [Русский](README.ru.md)
+
 # Demo application
 
 A minimal Laravel application the SConcur master serves, so the package can be seen
@@ -27,22 +29,28 @@ flowchart TB
     http["group http — 2 workers"]
     rabbit["group rabbitmq — 1 worker, 4 consumers"]
     tasks["group tasks — 1 worker"]
+    ws["group ws — 1 worker"]
     mysql["MySQL"]
     broker["RabbitMQ"]
 
     browser -->|"HTTP"| nginx
+    browser <-->|"WebSocket upgrade and frames"| nginx
     nginx -->|"proxy_pass"| http
+    nginx -->|"proxy_pass with Upgrade"| ws
     master --> http
     master --> rabbit
     master --> tasks
+    master --> ws
     http -->|"Eloquent over sconcur_mysql"| mysql
     http -->|"dispatch"| broker
+    http -->|"broadcast into the fanout exchange"| broker
     rabbit -->|"consume"| broker
     rabbit -->|"job_results"| mysql
     tasks -->|"heartbeats"| mysql
+    ws -->|"one exclusive queue per worker"| broker
 ```
 
-All three groups are pools of one master, configured in `demo/config/sconcur.php`.
+All four groups are pools of one master, configured in `demo/config/sconcur.php`.
 The master's telemetry panel is what the page's top section reads.
 
 ## State after a restart
@@ -66,18 +74,94 @@ by hand: `make demo-reset`.
 | `GET /api/jobs` | what the consumer pool did with them, plus the `failed_jobs` count |
 | `GET /api/heartbeats` | the counter the periodic task pool bumps |
 | `GET /api/scaling` / `POST /api/scaling` | how many processes each pool runs and how many consumers the queue gets in each; a change rolls only the groups it affects |
+| `GET /api/ws` | what the page needs to open its socket: the app key and the path, never the secret |
+| `POST /api/ws/broadcast` | broadcasts `count` copies of `DemoBroadcast` on the `demo` channel, each numbered; `others=1` adds `toOthers()` |
 | `GET /api/telemetry` | the master's panel, folded into what the page draws |
 
 The sequential leg of `/api/concurrent` is skipped when `n × ms` would exceed 3 s: it
 would really take that long, and a number nobody measured does not belong beside one
 somebody did.
 
+## The WebSocket panel
+
+The page holds an upgraded connection to one ws worker and the button posts to an http
+worker — two different processes, and the message arriving back on the socket is the whole
+demonstration: what carried it across is the fanout exchange. The pids in the log are of
+the two ends, so they do not match.
+
+The client is written against the wire protocol with the browser's own `WebSocket` rather
+than through `laravel-echo`: the demo has no bundler, and the frames are the same ones Echo
+sends. A real application uses Echo — [docs/websocket.md](../docs/websocket.md) shows the
+config it needs.
+
+The badge beside the heading says what is true now — the log below only says what
+happened. It carries the socket id once the handshake is through, and since a socket id is
+the worker's pid and a counter, it also names the ws worker this browser landed on.
+
+**messages** is how many to publish in one press. Each arrives as `<number> <text>`, so a
+burst reads as a burst and its order is visible rather than guessed.
+
+The **to others** box adds `->toOthers()`, so the browser that pressed the button is the
+one that does not see the messages. With two tabs open the difference is visible; with one,
+nothing arrives, which is the point.
+
+Only the public `demo` channel is used here. Private and presence channels are authorized
+through `/broadcasting/auth` against an authenticated user, and the demo has no users.
+
+## Checking the pool without a browser
+
+The page is the usual way to look at the pool, but it says nothing an exit code can be
+read from. `demo/bin/ws-check.php` walks the same path from the outside and reports every
+step:
+
+```bash
+make ws-check          # a burst of five
+make ws-check c=50     # the largest burst the panel can send
+```
+
+```
+ws check against scl-nginx:80, channel demo, burst of 50
+
+  ok  handshake                         socket_id=27.19
+  ok  the socket id names a worker      ws worker pid=27
+  ok  ping
+  ok  subscribe
+  ok  publish over http                 http worker pid=25
+  ok  the whole burst arrives           50 of 50, no duplicates
+
+all checks passed
+```
+
+What each line stands for:
+
+| Step | What it proves |
+|---|---|
+| handshake | nginx passes the upgrade through and the ws pool answers `pusher:connection_established` |
+| the socket id names a worker | the id is the worker's pid and a counter, so it says which ws worker took this connection |
+| ping | the connection is alive in both directions, not merely open |
+| subscribe | the channel was accepted — for a public channel, without going near `/broadcasting/auth` |
+| publish over http | the http worker accepted the burst; its pid differs from the ws worker's, which is the gap the bus crosses |
+| the whole burst arrives | every message came back, numbered from one, with nothing missing and nothing twice |
+
+It runs from the workers container, where the extension with the ws client lives, and it
+exits non-zero on the first failure. A refused upgrade is reported as a failed handshake
+with the reason on the line rather than as a stack trace — a wrong `SCONCUR_WS_APP_KEY`,
+for instance, gives `Invalid status code: 404`, because the path carries the key and a
+path that does not match is refused before PHP sees it.
+
+`make sconcur-status` and `make ext-status` answer the two questions that come before all
+of this: whether the `ws` group is up at all, and whether the loaded extension matches the
+package.
+
 ## Changing the pool sizes
 
 The **Pool sizes** panel writes the numbers to `demo/storage/app/scaling.json`, which
 `demo/config/sconcur.php` reads while it builds the master config, and asks for the
-affected groups to be rolled. The roll itself is done by `ScalingTask` in the periodic
-task pool, not by the request and not by a queued job:
+affected groups to be rolled. `ws` is one of them: at one worker the bus still carries
+every broadcast, and above one two browsers land on different workers, which is when it
+starts carrying them somewhere the publisher could not reach on its own. Zero takes the
+group out of the config, like it does for `rabbitmq`. The roll itself is done by
+`ScalingTask` in the periodic task pool, not by the request and not by a queued job:
 
 - reload waits for the roll to finish. An HTTP worker calling it would still be inside
   that wait when its own turn to be replaced came — the server waiting for the handler

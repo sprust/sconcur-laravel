@@ -6,6 +6,7 @@ $finder = PhpCsFixer\Finder::create()
         __DIR__ . '/tests',
         __DIR__ . '/workbench',
         __DIR__ . '/demo/app',
+        __DIR__ . '/demo/bin',
         __DIR__ . '/demo/config',
         __DIR__ . '/demo/database',
         __DIR__ . '/demo/routes',

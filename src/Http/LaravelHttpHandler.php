@@ -21,7 +21,7 @@ use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
  * The request is published into the coroutine context, so AsyncApplication
  * resolves 'request' per-fiber and concurrent requests do not share it. Full
  * isolation of auth/session/router lands in later stages
- * (see docs/fiber-safe-laravel-bridge.ru.md).
+ * (see .ai/plans/bridge/fiber-safe-laravel-bridge.md).
  */
 readonly class LaravelHttpHandler
 {

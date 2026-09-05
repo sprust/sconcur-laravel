@@ -132,6 +132,25 @@
             font-family: var(--mono); font-size: 12px;
         }
 
+        /* A checkbox is not a text field: the rule above stretches every input to the
+           column, which on a box means a wide grey rectangle with a tick in the corner. */
+        input[type="checkbox"] { width: auto; justify-self: start; margin: 0; }
+
+        /* The connection state, next to the heading it belongs to. A ws panel without one
+           reads the same whether the socket is open or gone, and the log below it only
+           says what happened, not what is true now. */
+        .badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 2px 8px; border-radius: 999px;
+            border: 1px solid var(--border); background: var(--bg);
+            font-family: var(--mono); font-size: 11px; font-weight: normal;
+        }
+
+        .badge::before {
+            content: ''; width: 7px; height: 7px; border-radius: 50%;
+            background: currentColor;
+        }
+
         .ok { color: var(--ok); }
         .warn { color: var(--warn); }
         .bad { color: var(--bad); }
@@ -163,7 +182,9 @@
                 How many processes each pool runs, and how many consumers the RabbitMQ
                 queue gets inside each of them. Applying rolls only the groups that
                 changed — the rolling is done by the task pool, the one pool this never
-                touches.
+                touches. Raising <code>ws</code> above one puts two browsers on different
+                workers, which is what the fanout bus is there for; rolling it drops the
+                open sockets, and the page reconnects.
             </p>
             <div class="controls">
                 <div class="field">
@@ -180,6 +201,10 @@
                 <div class="field">
                     <span></span>
                     <span class="hint">processes &times; consumer coroutines in each</span>
+                </div>
+                <div class="field">
+                    <label for="s-ws">ws</label>
+                    <input id="s-ws" type="number" min="{{ $scalingLimits['wsWorkers']['min'] }}" max="{{ $scalingLimits['wsWorkers']['max'] }}" value="{{ $scaling['wsWorkers'] }}" title="WebSocket worker processes (0 takes the pool out of the master config)">
                 </div>
                 <div class="actions"><button data-run="scaling">Apply</button></div>
             </div>
@@ -230,6 +255,22 @@
                 <div class="actions"><button data-run="job">Dispatch</button></div>
             </div>
             <pre id="out-jobs">—</pre>
+        </div>
+
+        <div class="panel">
+            <h2>WebSocket <span class="badge muted" id="ws-state">connecting</span></h2>
+            <p class="muted" style="margin-top:0">
+                The page holds an upgraded connection to one ws worker; the button posts to an
+                http worker, which publishes to the fanout bus. The pids below are of two
+                different processes — that gap is what the bus crosses.
+            </p>
+            <div class="controls">
+                <div class="field"><label for="w-text">message</label><input id="w-text" type="text" value="hello" placeholder="message"></div>
+                <div class="field"><label for="w-count">messages</label><input id="w-count" type="number" value="5" min="1" max="50" title="how many to publish; each arrives as &quot;number text&quot;"></div>
+                <div class="field"><label for="w-others">to others</label><input id="w-others" type="checkbox" title="exclude this browser: broadcast()->toOthers()"></div>
+                <div class="actions"><button data-run="ws">Broadcast</button></div>
+            </div>
+            <pre id="out-ws">—</pre>
         </div>
 
         <div class="panel">
@@ -309,11 +350,13 @@
             httpWorkers: num('s-http'),
             rabbitmqWorkers: num('s-rmq'),
             rabbitmqCoroutines: num('s-coro'),
+            wsWorkers: num('s-ws'),
         })),
     };
 
 
     document.querySelectorAll('button[data-run]').forEach((button) => {
+        // Не каждая кнопка живёт в actions: ws-панель вешает свой обработчик ниже.
         button.addEventListener('click', async () => {
             button.disabled = true;
             try { await actions[button.dataset.run](); } finally { button.disabled = false; }
@@ -387,6 +430,145 @@
 
     poll();
     setInterval(poll, 1000);
+
+    // The ws client, written against the wire protocol rather than through laravel-echo:
+    // the demo has no bundler, and the frames are the same ones Echo sends. A real
+    // application uses Echo — docs/websocket.md shows the config it needs.
+    const ws = {
+        socket: null,
+        socketId: null,
+        log: [],
+    };
+
+    // The largest burst the panel can send is 50 messages, and the whole of it has to stay
+    // readable: below that the answers to one press push each other out and the numbering
+    // reads as if messages were lost. The extra lines are the publish confirmation and the
+    // handshake around it.
+    const WS_LOG_LINES = 60;
+
+    const wsLog = (line) => {
+        ws.log.unshift(new Date().toLocaleTimeString() + '  ' + line);
+
+        ws.log = ws.log.slice(0, WS_LOG_LINES);
+
+        $('out-ws').textContent = ws.log.join('\n');
+    };
+
+    // The badge says what is true now; the log says what happened. Both are needed —
+    // a log ending in "subscribed" reads the same whether the socket is still open.
+    const wsState = (text, tone) => {
+        const badge = $('ws-state');
+
+        badge.textContent = text;
+        badge.className = 'badge ' + tone;
+    };
+
+    const wsConnect = async () => {
+        // fetchJson бросает на 5xx, а 502 здесь — обычное дело: соседняя панель катит
+        // http-пул. Без перехвата первый же такой отказ обрывал цепочку переподключения
+        // навсегда — WebSocket не создавался, значит onclose больше не приходил.
+        let config;
+
+        try {
+            config = await fetchJson('/api/ws');
+        } catch (error) {
+            wsState('disconnected, retrying', 'bad');
+
+            setTimeout(wsConnect, 2000);
+
+            return;
+        }
+
+        if (config.error || !config.key) {
+            wsState('not configured', 'bad');
+
+            wsLog('no app key: set SCONCUR_WS_APP_KEY and start the ws pool');
+
+            return;
+        }
+
+        const url = (location.protocol === 'https:' ? 'wss://' : 'ws://')
+            + location.host + config.pathPrefix + '/' + config.key + '?protocol=7&client=demo&version=1.0';
+
+        const socket = new WebSocket(url);
+
+        ws.socket = socket;
+
+        socket.onopen = () => { wsState('upgraded', 'warn'); };
+
+        socket.onclose = () => {
+            wsState('disconnected, retrying', 'bad');
+
+            ws.socketId = null;
+
+            setTimeout(wsConnect, 2000);
+        };
+
+        socket.onmessage = (message) => {
+            const frame = JSON.parse(message.data);
+
+            // `data` travels as a string with JSON inside it, both ways. That is the
+            // protocol, not an encoding accident.
+            const data = typeof frame.data === 'string' ? JSON.parse(frame.data || '{}') : (frame.data || {});
+
+            if (frame.event === 'pusher:connection_established') {
+                ws.socketId = data.socket_id;
+
+                // The socket id is the worker pid and a counter, so the badge also says
+                // which of the ws workers this browser landed on.
+                wsState('connected as ' + data.socket_id, 'ok');
+
+                socket.send(JSON.stringify({event: 'pusher:subscribe', data: {channel: config.channel}}));
+
+                return;
+            }
+
+            if (frame.event === 'pusher_internal:subscription_succeeded') {
+                wsLog('subscribed to ' + frame.channel);
+
+                return;
+            }
+
+            if (frame.event === 'pusher:ping') {
+                socket.send(JSON.stringify({event: 'pusher:pong', data: {}}));
+
+                return;
+            }
+
+            if (frame.event === 'demo.message') {
+                wsLog('from ' + data.source + ' pid=' + data.workerPid + ': ' + data.text);
+
+                return;
+            }
+
+            wsLog(frame.event + ' ' + JSON.stringify(data));
+        };
+    };
+
+    const wsBroadcast = async () => {
+        const answer = await fetchJson('/api/ws/broadcast', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-Socket-ID': ws.socketId || ''},
+            body: JSON.stringify({
+                text: $('w-text').value,
+                count: num('w-count'),
+                others: $('w-others').checked ? 1 : 0,
+            }),
+        });
+
+        if (answer.error) {
+            wsLog('publish failed: ' + answer.error);
+
+            return;
+        }
+
+        wsLog('published ' + answer.published + ' from http pid=' + answer.workerPid
+            + (answer.toOthers ? ' (to others)' : ''));
+    };
+
+    document.querySelector('[data-run="ws"]').addEventListener('click', wsBroadcast);
+
+    wsConnect();
 </script>
 </body>
 </html>

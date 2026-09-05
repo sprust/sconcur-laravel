@@ -103,6 +103,37 @@ return [
                 ],
             ],
 
+            // The ws pool. Off unless asked for, like the rabbitmq group — and settable
+            // from the page: raise it above one to watch the fanout bus do something
+            // visible, with two browsers landing on different workers.
+            $scaling['wsWorkers'] < 1 ? null : [
+                'name'         => 'ws',
+                'workerScript' => base_path('artisan'),
+                'workerCount'  => $scaling['wsWorkers'],
+                'workerArgs'   => ['sconcur:servers:ws:start'],
+                'server'       => [
+                    'address'   => '0.0.0.0:' . env('SCONCUR_WS_PORT', 28090),
+                    'reusePort' => (bool) env('SCONCUR_WS_REUSE_PORT', true),
+                    // The key is part of the path, and the comparison ignores the query
+                    // string — so /app/{key}?protocol=7 matches and a wrong key is a 404
+                    // on the handshake.
+                    'path'      => rtrim(env('SCONCUR_WS_PATH_PREFIX', '/app'), '/') . '/' . env('SCONCUR_WS_APP_KEY', ''),
+
+                    'handshakeTimeoutMs' => (int) env('SCONCUR_WS_HANDSHAKE_TIMEOUT_MS', 10000),
+                    'idleTimeoutMs'      => (int) env('SCONCUR_WS_IDLE_TIMEOUT_MS', 0),
+                    'writeTimeoutMs'     => (int) env('SCONCUR_WS_WRITE_TIMEOUT_MS', 30000),
+                    'pingIntervalMs'     => (int) env('SCONCUR_WS_PING_INTERVAL_MS', 30000),
+                    'maxMessageBytes'    => (int) env('SCONCUR_WS_MAX_MESSAGE_BYTES', 1048576),
+                    'maxConcurrency'     => (int) env('SCONCUR_WS_MAX_CONCURRENCY', 0),
+                    // Zero, always: this is a deadline on the whole life of a connection.
+                    'handlerTimeoutMs'   => 0,
+                    'maxConnections'     => (int) env('SCONCUR_WS_MAX_CONNECTIONS', 0),
+
+                    'shutdownTimeoutMs'   => (int) env('SCONCUR_WS_SHUTDOWN_TIMEOUT_MS', 10000),
+                    'preemptionQuantumMs' => (int) env('SCONCUR_WS_PREEMPTION_QUANTUM_MS', 5),
+                ],
+            ],
+
             // Exactly one worker, always: a second one would tick every task twice.
             [
                 'name'         => 'tasks',
@@ -134,6 +165,36 @@ return [
             'tries'     => (int) env('SCONCUR_RABBITMQ_TRIES', 3),
             'backoff'   => (int) env('SCONCUR_RABBITMQ_BACKOFF', 0),
             'memory_mb' => (int) env('SCONCUR_RABBITMQ_MEMORY_MB', 128),
+        ],
+    ],
+
+    'ws' => [
+        'app_key'    => env('SCONCUR_WS_APP_KEY', ''),
+        'app_secret' => env('SCONCUR_WS_APP_SECRET', ''),
+
+        'path_prefix' => env('SCONCUR_WS_PATH_PREFIX', '/app'),
+
+        'activity_timeout_seconds'    => (int) env('SCONCUR_WS_ACTIVITY_TIMEOUT_SECONDS', 120),
+        'max_channels_per_connection' => (int) env('SCONCUR_WS_MAX_CHANNELS_PER_CONNECTION', 100),
+
+        'client_events'            => (bool) env('SCONCUR_WS_CLIENT_EVENTS', false),
+        'client_events_per_minute' => (int) env('SCONCUR_WS_CLIENT_EVENTS_PER_MINUTE', 60),
+
+        // The demo runs two ws workers, so the bus is doing real work: the page is
+        // connected to one of them and the broadcast is published by an http worker.
+        'bus' => [
+            'driver'   => env('SCONCUR_WS_BUS_DRIVER', 'amqp'),
+            'dsn'      => env('SCONCUR_WS_BUS_DSN', env('SCONCUR_RABBITMQ_DSN')),
+            'exchange' => env('SCONCUR_WS_BUS_EXCHANGE', 'sconcur.ws'),
+
+            'read_timeout_seconds' => (float) env('SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS', 5.0),
+            'reopen_backoff_ms'    => (int) env('SCONCUR_WS_BUS_REOPEN_BACKOFF_MS', 1000),
+        ],
+
+        'presence' => [
+            'store'        => env('SCONCUR_WS_PRESENCE_STORE', 'auto'),
+            'ttl_seconds'  => (int) env('SCONCUR_WS_PRESENCE_TTL_SECONDS', 3600),
+            'cache_prefix' => env('SCONCUR_WS_PRESENCE_CACHE_PREFIX', 'sconcur:ws:presence'),
         ],
     ],
 

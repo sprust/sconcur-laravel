@@ -9,7 +9,7 @@ working in this repository. `CLAUDE.md` and `AGENTS.md` both point here.
 
 SConcur Laravel is the Laravel integration for
 [SConcur](https://github.com/sprust/sconcur), a PHP concurrency library backed by a
-Rust extension. It gives an application three runtimes and a coroutine-scoped container:
+Rust extension. It gives an application four runtimes and a coroutine-scoped container:
 
 - **HTTP server** — each request runs in its own PHP Fiber inside one long-lived
   process (`src/Http/`).
@@ -17,8 +17,10 @@ Rust extension. It gives an application three runtimes and a coroutine-scoped co
   instead of one blocking `queue:work` per worker (`src/Queue/Rabbitmq/`).
 - **Periodic task pool** — every configured task is a coroutine of one `WaitGroup`
   (`src/Tasks/`).
+- **WebSocket pool** — every upgraded connection is a coroutine, speaking a
+  Pusher-compatible subset so `laravel-echo` needs no client of its own (`src/Ws/`).
 
-All three are pools of one supervisor process, the SConcur **master**
+All four are pools of one supervisor process, the SConcur **master**
 (`src/Servers/MasterRunner.php`), configured as `groups` in `config/sconcur.php`.
 
 The container is coroutine-scoped in every process, with nothing to turn on: config,
@@ -29,16 +31,16 @@ implementations are.
 
 ## Further reading
 
-- [README.md](../README.md) / [README.ru.md](../README.ru.md) — package overview,
-  installation, artisan commands, ENV reference. A bilingual pair: the two carry the
-  same sections in the same order, so a change to one belongs in the other
-- [docs/fiber-safe-laravel-bridge.ru.md](../docs/fiber-safe-laravel-bridge.ru.md) —
-  why Octane's model is not fiber-safe and what replaces it here
-- [docs/sconcur-coroutine-context.ru.md](../docs/sconcur-coroutine-context.ru.md) —
-  the coroutine context this package builds on
-- [docs/task-pool.ru.md](../docs/task-pool.ru.md) — the periodic task pool
-- [demo/README.md](../demo/README.md) — the demo application
-- [.ai/plans/](plans/) — detailed designs for roadmap items
+- [README.md](../README.md) / [README.ru.md](../README.ru.md) — the overview: what the
+  package is, the four runtimes, the artisan commands, and the `## Documentation` index
+  that lists every document
+- [docs/](../docs/) — one topic per document, each a bilingual pair. Everything longer
+  than a few paragraphs lives here rather than in the README
+- [demo/README.md](../demo/README.md) / [demo/README.ru.md](../demo/README.ru.md) —
+  the demo application
+- [.ai/plans/](plans/) — detailed designs, including
+  [bridge/](plans/bridge/): why Octane's model is not fiber-safe, what replaces it
+  here, and the coroutine context this package builds on
 
 ## Plans
 
@@ -94,7 +96,7 @@ Five containers, prefix `scl-`:
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
 asset. **`composer.lock` must stay committed** — without it a fresh clone has nothing
-to pin against. The library version is pinned exactly (`0.12.1`, not a caret): the
+to pin against. The library version is pinned exactly (`0.12.2`, not a caret): the
 `.so` and the PHP side cross a protocol boundary that changes with the version.
 
 ## Architecture
@@ -119,6 +121,12 @@ src/Database/Mysql/             — Connector, Connection, Dsn, TransactionStack
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
 src/Tasks/Control/              — stop/restart through a cache key, from any container
+src/Ws/                         — WsServerRunner, ConnectionHandler, ConnectionRegistry
+src/Ws/Protocol/                — the wire frames, channel names, error codes
+src/Ws/Auth/                    — SignatureVerifier (both halves of the channel signature)
+src/Ws/Bus/                     — the broadcast bus: AmqpBroadcastBus, BusSubscriber
+src/Ws/Presence/                — the member list of a presence channel
+src/Ws/Broadcasting/            — SConcurBroadcaster, the `sconcur` broadcast driver
 ```
 
 Points worth knowing before changing anything:
@@ -131,9 +139,10 @@ Points worth knowing before changing anything:
   `artisan --address=… sconcur:servers:http:start --masterPid=N`, so the command name
   is not argv[1] and the check answered no in the very processes it existed for.
 - **A group's `server` block is forwarded to its workers' argv verbatim.** Symfony
-  Console rejects flags a command does not declare, so `HttpStartCommand` and
-  `RabbitmqConsumerStartCommand` declare every one of them even though
-  `HttpServer::fromArgs` / `QueueConsumer::fromArgs` are what read them.
+  Console rejects flags a command does not declare, so `HttpStartCommand`,
+  `RabbitmqConsumerStartCommand` and `WsStartCommand` declare every one of them even
+  though `HttpServer::fromArgs` / `QueueConsumer::fromArgs` / `WsServer::fromArgs` are
+  what read them.
 - **Nothing declares RabbitMQ topology.** Neither the publishing driver nor
   `QueueConsumer`. `sconcur:rabbitmq:declare` must run before the first publish and
   before the pool starts — it is on every install path (`make setup`), not a one-off.
@@ -142,6 +151,16 @@ Points worth knowing before changing anything:
   worker per CPU. The `array_values(array_filter(...))` around the group list is load
   bearing — `array_filter` preserves keys, and `MasterConfig::parseGroups` refuses a
   non-list.
+- **The ws bus subscriber must not outlive the connections.** `Scheduler::serve` stops
+  accepting and then waits for every spawned coroutine before it exits, so a subscriber
+  looping for ever holds the drain open until the master's shutdown timeout kills the
+  process. It is therefore started by the first connection and stands down once the
+  registry is empty; on a silent bus that check comes round every
+  `SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS`, which is what bounds the graceful stop.
+- **The ws worker's own queue is `exclusive` but not `autoDelete`.** The subscriber leaves
+  the consumer generator on every idle wake to re-check the registry, and leaving it
+  cancels the consumer — with `autoDelete` the broker drops the queue in that gap and the
+  next consume takes the channel down with a 404.
 - **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
   the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;
   sqlx hardcodes that capability in its handshake, keeps `MySqlQueryResult` to two
@@ -191,19 +210,19 @@ The demo is not a workbench because testbench builds
 
 ### Language
 
-**English everywhere except the Russian documentation.** Russian belongs in exactly two
-places: the `docs/*.ru.md` files and `.ai/plans/`, which is written in Russian by a
-maintainer decision.
+**English everywhere except the Russian half of the documentation.** Russian belongs in
+the `*.ru.md` files and in `.ai/plans/`, which is written in Russian by a maintainer
+decision.
 
 Everything else is English, with no exceptions: code and its comments, PHPDoc,
 exception and log messages, test names and failure messages, shell scripts including
 everything they print, and commit messages.
 
-`README.md` and `README.ru.md` are the bilingual pair the neighbouring projects use:
-`X.md` / `X.ru.md`, with a language switcher on the first line. They mirror each other
-section for section — never add a section to one alone, and never let the two describe
-different behavior. Everything else under `docs/` is still Russian-only (`*.ru.md`);
-pairing it up is a separate job.
+**Every document is a bilingual pair**, the way the `sconcur` library keeps its own:
+`X.md` in English and `X.ru.md` in Russian, `README.md` and `README.ru.md` included.
+The two mirror each other section for section — never add a section to one alone, and
+never let them describe different behaviour. A document that exists in one language
+only is unfinished.
 
 ### Naming
 
@@ -249,11 +268,38 @@ and do not mass-convert as a side effect of an unrelated change.
 
 ## Documentation style
 
+The layout and the shape of a page follow the `sconcur` library's own docs — the two
+projects are read side by side, and a reader should not have to learn two conventions.
+
+### Layout
+
+- **One topic per document, under `docs/`.** The README is an overview and an index, not
+  a manual: it carries what the project is, what it needs, how to get it running, and a
+  list of the documents. Anything that grows past a few paragraphs moves to a document
+  of its own and is linked from there.
+- **A bilingual pair for every document**, `X.md` and `X.ru.md`. See "Language".
+- **A language switcher on the first line**, before the title:
+  `English | [Русский](x.ru.md)` in the English half, `[English](x.md) | Русский` in the
+  Russian one. Then a blank line, then the `#` title.
+- **Links stay in their own language**: the English document links to `x.md`, the Russian
+  one to `x.ru.md`.
+- **A table of contents in a long document** — `## Table of contents` / `## Оглавление`
+  right after the opening paragraphs, as a list of links to its own sections.
+
+### Writing
+
 - **Verify every technical claim against the code before writing it** — class and
   method names/signatures, option names and defaults, enum cases, CLI flags, file
   paths, behavioral claims. Fix inaccuracies; never guess.
 - **Dry and compact.** Short sentences, no marketing metaphors, no long reasoning
   around a fact a table already states.
+- **The present tense only.** A document says what the code does, not what it used to do,
+  what was tried before, when something was measured, or which release changed it. That
+  belongs in the git history and in `.ai/plans/`. "There used to be", "this was fixed
+  in", "verified on such a date" — none of it goes in `docs/` or the README.
+- **No slang and no shorthand.** Write the term out: "connection", not "conn"; "worker
+  process", not "воркер-процесс" where a Russian word exists. Words the project itself
+  uses — coroutine, fiber, worker, broadcast — are terms, not slang, and stay.
 - **Minimal bold.** Use `**bold**` only for a genuinely critical warning or a couple of
   key terms — heavy bolding is the top "AI-generated" tell.
 - **Do not put source line numbers in docs** — they go stale. Reference file paths only.

@@ -9,7 +9,7 @@ namespace SConcur\Laravel\Database\Mysql;
  *
  * The PDO connector applies charset, timezone and sql_mode as SET statements after
  * connecting; this driver takes them in the DSN instead. Verified against the parser the
- * extension carries (ext/src/features/sql/dsn.rs) in sconcur 0.12.1:
+ * extension carries (ext/src/features/sql/dsn.rs) in sconcur 0.12.2:
  *
  * - `charset`, `collation`, `time_zone` and `tls` are connect options it knows by name;
  * - anything else it does not recognise is what this DSN format says it is — a session

@@ -187,7 +187,7 @@ async-режиме (глубокое per-request состояние в синг�
 
 > Полное отдельное ТЗ для разработчика SConcur (фреймворк-нейтральное, с точками интеграции в
 > `State`/`Scheduler`/`WaitGroup`, скетчем реализации и тестами) — в
-> [sconcur-coroutine-context.ru.md](sconcur-coroutine-context.ru.md). Ниже — краткая выжимка.
+> [sconcur-coroutine-context.md](sconcur-coroutine-context.md). Ниже — краткая выжимка.
 
 ### 6.1. Требование
 
