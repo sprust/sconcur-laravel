@@ -98,7 +98,7 @@ class CleanupTask implements TaskInterface
 Задачи резолвятся из контейнера по имени класса, поэтому они — обычные сервисы с
 внедрением зависимостей, а конфиг кэшируется как любой другой.
 
-Полный перечень ENV — в [configuration.ru.md](configuration.ru.md).
+Полный перечень ENV — в [configuration.ru.md](configuration.ru.md#пул-задач).
 
 ## Команды
 

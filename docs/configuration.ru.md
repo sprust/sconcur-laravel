@@ -2,19 +2,22 @@
 
 # Конфигурация (ENV)
 
-Все значения `config/sconcur.php` берутся из ENV. Дефолты ниже — пакетные, из каркаса;
-в опубликованном файле приложение ставит свои.
+Все значения `config/sconcur.php` берутся из ENV, и здесь перечислена каждая переменная,
+которую читает пакет. Дефолты — пакетные, из каркаса; в опубликованном файле приложение
+ставит свои.
 
 ## Оглавление
 
 - [Общие](#общие)
 - [Мастер (supervisor)](#мастер-supervisor)
+- [Группы](#группы)
 - [Группа `http`](#группа-http)
-- [HTTP-сервер (блок `server` группы `http`)](#http-сервер-блок-server-группы-http)
-- [Группы (SConcur 0.12)](#группы-sconcur-012)
+- [HTTP-сервер](#http-сервер)
+- [Группа `rabbitmq` и её консьюмеры](#группа-rabbitmq-и-её-консьюмеры)
 - [Группа `ws`](#группа-ws)
-- [WebSocket-сервер (блок `server` группы `ws`)](#websocket-сервер-блок-server-группы-ws)
-- [Протокол WebSocket (`sconcur.ws`)](#протокол-websocket-sconcurws)
+- [WebSocket-сервер](#websocket-сервер)
+- [Протокол WebSocket](#протокол-websocket)
+- [Пул задач](#пул-задач)
 
 ## Общие
 
@@ -40,15 +43,39 @@
 | `SCONCUR_HTTP_RESTART_BACKOFF_MS` | `200` | стартовый backoff рестарта, мс |
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | макс. backoff рестарта, мс |
 
+Не из ENV: `workerScript=base_path('artisan')`, `phpArgs=[]`,
+`runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
+
+## Группы
+
+Один мастер супервизит несколько непохожих пулов под одним локом и одним журналом,
+поэтому `workerScript`, `workerCount`, `workerArgs` и `server` живут не на верхнем
+уровне конфига, а в элементе списка `groups`.
+
+Блок `server` группы мастер форвардит в argv её воркеров как есть, поэтому все три
+команды — `http:start`, `rabbitmq:start` и `ws:start` — объявляют эти флаги: artisan
+отвергает то, чего не объявлено. Читают их `HttpServer::fromArgs`,
+`QueueConsumer::fromArgs` и `WsServer::fromArgs`. Всё, что не скаляр (список очередей),
+мастер кодирует в JSON по дороге.
+
+Запуск без мастера форвардить некому, поэтому команда в этом случае берёт тот же блок
+`server` из конфига своей группы. Группа ищется по тому, что она запускает, а не по
+имени, — иначе переименование группы тихо оставило бы standalone-запуск на дефолтах
+библиотеки.
+
+`workerCount` меньше единицы — это и есть способ выключить пул: группа не попадает в
+конфиг мастера вовсе. Ноль так не работает: для мастера `workerCount: 0` означает воркер
+на ядро (`WorkerGroup`, `Cpu::count()`).
+
 ## Группа `http`
 
 | ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_HTTP_WORKER_COUNT` | `2` | число воркеров группы (0 = по числу ядер) |
 
-`workerCount` — ключ группы, а не мастера, поэтому и таблица своя.
+## HTTP-сервер
 
-## HTTP-сервер (блок `server` группы `http`)
+Блок `server` группы `http`.
 
 | ENV | Дефолт | Назначение |
 |---|---|---|
@@ -64,35 +91,42 @@
 | `SCONCUR_HTTP_HANDLER_TIMEOUT_MS` | `60000` | таймаут обработки запроса, мс |
 | `SCONCUR_HTTP_SERVER_SHUTDOWN_TIMEOUT_MS` | `5000` | таймаут остановки сервера, мс |
 
-Не из ENV: `workerScript=base_path('artisan')`, `workerArgs=['sconcur:servers:http:start']`,
-`phpArgs=[]`, `runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
+## Группа `rabbitmq` и её консьюмеры
 
-## Группы (SConcur 0.12)
+Как устроен пул — в [queue.ru.md](queue.ru.md).
 
-Один мастер супервизит несколько непохожих пулов под одним локом и одним журналом,
-поэтому `workerScript`, `workerCount`, `workerArgs` и `server` живут не на верхнем
-уровне конфига, а в элементе списка `groups`.
+| ENV | Дефолт | Назначение |
+|---|---|---|
+| `SCONCUR_RABBITMQ_WORKER_COUNT` | `0` | процессов в пуле; меньше `1` — группа не попадает в конфиг мастера |
+| `SCONCUR_RABBITMQ_QUEUE` | `default` | очередь, которую читает пул |
+| `SCONCUR_RABBITMQ_QUEUE_CONSUMERS` | `1` | вес этой очереди — сколько консьюмеров она получает |
+| `SCONCUR_RABBITMQ_PREFETCH_COUNT` | `1` | неподтверждённых сообщений на консьюмера |
+| `SCONCUR_RABBITMQ_HANDLER_TIMEOUT_MS` | `0` | дедлайн на одно сообщение в обработчике; `0` — нет |
+| `SCONCUR_RABBITMQ_REQUEUE_ON_FAILURE` | `false` | возвращать упавшее сообщение в очередь вместо dead-letter |
+| `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | дренировать и выйти после N сообщений |
+| `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | дренировать и выйти через N секунд |
+| `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | дренировать и выйти по размеру кучи |
+| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | лимит памяти воркера, МиБ |
+| `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | соединение `config/queue.php`, на котором идут джобы |
+| `SCONCUR_RABBITMQ_TRIES` | `1` | попыток до `failed_jobs` |
+| `SCONCUR_RABBITMQ_BACKOFF` | `0` | пауза перед повтором, секунд |
+| `SCONCUR_RABBITMQ_DSN` | — | брокер, в виде `amqp://user:pass@host:5672/%2f` |
 
-Блок `server` группы мастер форвардит в argv её воркеров как есть, поэтому все три
-команды — `http:start`, `rabbitmq:start` и `ws:start` — объявляют эти флаги: artisan
-отвергает то, чего не объявлено. Читают их `HttpServer::fromArgs`,
-`QueueConsumer::fromArgs` и `WsServer::fromArgs`. Всё, что не
-скаляр (список очередей), мастер кодирует в JSON по дороге.
-
-Запуск без мастера форвардить некому, поэтому команда в этом случае берёт тот же блок
-`server` из конфига своей группы. Группа ищется по тому, что она запускает, а не по
-имени, — иначе переименование группы тихо оставило бы standalone-запуск на дефолтах
-библиотеки.
+Каркас описывает одну очередь, потому что больше он знать не может. Список любой длины и
+его веса приложение пишет в `sconcur.queue.rabbitmq.queues` опубликованного файла, и этот
+же список объявляет `sconcur:rabbitmq:declare`.
 
 ## Группа `ws`
 
-| ENV | По умолчанию | Что делает |
+| ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_WS_WORKER_COUNT` | `0` | воркеров в группе; меньше 1 убирает группу из конфига |
 
-## WebSocket-сервер (блок `server` группы `ws`)
+## WebSocket-сервер
 
-| ENV | По умолчанию | Что делает |
+Блок `server` группы `ws`.
+
+| ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_WS_ADDRESS` | `0.0.0.0:28090` | адрес прослушивания |
 | `SCONCUR_WS_REUSE_PORT` | `true` | `SO_REUSEPORT` (несколько процессов на одном порту) |
@@ -114,9 +148,11 @@
 Путь сравнивается без query-строки, поэтому `/app/{key}?protocol=7&client=js` совпадает,
 а чужой ключ получает `404` на рукопожатии, ещё до PHP.
 
-## Протокол WebSocket (`sconcur.ws`)
+## Протокол WebSocket
 
-| ENV | По умолчанию | Что делает |
+Секция `sconcur.ws`. Как устроен пул — в [websocket.ru.md](websocket.ru.md).
+
+| ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_WS_APP_KEY` | `` (пусто) | публичный ключ; браузер несёт его в пути |
 | `SCONCUR_WS_APP_SECRET` | `` (пусто) | подписывает подписки на каналы; только http- и ws-воркеры |
@@ -140,6 +176,25 @@
 остановке сервера завершиться. Поэтому значение обязано оставаться заметно меньше
 `shutdownTimeoutMs` группы.
 
-Список участников, лежащий в одном процессе, верен ровно пока процесс один. При пуле
-`memory` не неполон, а неверен — каждый воркер отвечает своими подписчиками; `auto` берёт
-там `cache`, а явный `memory` команда старта не принимает молча, а сообщает о нём.
+`SCONCUR_WS_PRESENCE_STORE` со значением `memory` верен ровно пока процесс один. При пуле
+он не неполон, а неверен — каждый воркер отвечает своими подписчиками; `auto` берёт там
+`cache`, а явный `memory` команда старта не принимает молча, а сообщает о нём.
+
+## Пул задач
+
+Как устроен пул — в [task-pool.ru.md](task-pool.ru.md).
+
+| ENV | Дефолт | Назначение |
+|---|---|---|
+| `SCONCUR_TASKS_CONTROL_KEY` | `sconcur:tasks:control` | ключ кэша, через который до пула доходят `stop` и `restart` |
+| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | путь flock; не даёт стартовать второй копии задачи |
+| `SCONCUR_TASKS_MEMORY_MB` | `256` | лимит памяти процесса; за ним — выход с `EXIT_RESTART` |
+| `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | насколько мелко режется пауза, то есть как быстро пул замечает сигнал |
+| `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `1000` | автоматическое переключение корутин; `0` — выключено |
+| `SCONCUR_TASKS_REPORT_TICKS` | `true` | показывать тики в секции `consumers` панели |
+| `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_SECONDS` | `20` | сколько ждать текущие тики, прежде чем размотать группу |
+| `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_MS` | `30000` | сколько мастер ждёт воркера пула; обязан быть больше предыдущего |
+
+Группа пула — один воркер и `restartPolicy: on-failure` вместо унаследованного от мастера
+`always`, чтобы `sconcur:tasks:stop`, который выходит с нулём, не отменялся заменой через
+секунду.

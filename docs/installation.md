@@ -4,7 +4,8 @@ English | [Русский](installation.ru.md)
 
 Nine steps from an empty application to a master serving requests. Steps 6 and 7 are
 optional: they add the non-blocking MySQL connection and the queue driver, and the HTTP
-server runs without either.
+server runs without either. The WebSocket pool is optional in the same way and is set up
+in [websocket.md](websocket.md).
 
 ## Table of contents
 
@@ -41,10 +42,10 @@ than working somehow.
 composer require sconcur/laravel
 ```
 
-`SConcur\Laravel\SConcurServiceProvider` is found by auto-discovery (`extra.laravel.providers`
-in the package's `composer.json`) — there is nothing to add to `bootstrap/providers.php`.
-It registers the artisan commands, the `sconcur_rabbitmq` queue driver, the
-`sconcur_mysql` database driver, the task pool and the coroutine adapters.
+`SConcur\Laravel\SConcurServiceProvider` is found by auto-discovery
+(`extra.laravel.providers` in the package's `composer.json`) — there is nothing to add to
+`bootstrap/providers.php`. It registers the artisan commands, the `sconcur_rabbitmq` queue
+driver, the `sconcur_mysql` database driver, the task pool and the coroutine adapters.
 
 ## 2. The `sconcur.so` extension
 
@@ -96,7 +97,8 @@ rather than running on an empty array.
 What the package ships is a skeleton: whatever is true of any application. The details —
 your queues, their weights, the process counts — live in the published file.
 
-The minimum in `.env` for the master to come up; the full list is in "Configuration (ENV)":
+The minimum in `.env` for the master to come up; the full list is in
+[configuration.md](configuration.md):
 
 ```dotenv
 SCONCUR_HTTP_NAME=my-app
@@ -221,12 +223,12 @@ php artisan sconcur:rabbitmq:declare
 
 Skipping it means losing jobs silently (a publish goes to the default exchange on a
 routing key nothing is bound to) and spinning the pool through a restart loop on a `404`.
-The details are in "Declaring the queues is mandatory".
+The details are in [queue.md](queue.md).
 
 ## 8. Running it
 
-The master is one process holding every pool: `http`, `rabbitmq` and `tasks`. It is also
-what the supervisor starts:
+The master is one process holding every pool — `http`, `rabbitmq`, `ws` and `tasks` — and
+it is what the supervisor starts:
 
 ```ini
 [program:sconcur-master]
@@ -256,6 +258,10 @@ location / {
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
+
+A WebSocket pool needs a second `location` beside this one, with the upgrade headers and a
+long read timeout — the block above would cut every socket loose once a minute. It is in
+[websocket.md](websocket.md).
 
 New code is rolled out with `sconcur:servers:master:reload`: a rolling restart of the
 workers with the master left up. A single group is updated with `--group=http`.

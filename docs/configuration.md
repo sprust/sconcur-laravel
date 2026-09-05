@@ -2,19 +2,22 @@ English | [Русский](configuration.ru.md)
 
 # Configuration (ENV)
 
-Every value of `config/sconcur.php` comes from ENV. The defaults below are the package's,
-from the skeleton; in the published file the application sets its own.
+Every value of `config/sconcur.php` comes from ENV, and every variable the package reads is
+listed here. The defaults are the package's, from the skeleton; in the published file the
+application sets its own.
 
 ## Table of contents
 
 - [General](#general)
 - [The master (supervisor)](#the-master-supervisor)
+- [Groups](#groups)
 - [The `http` group](#the-http-group)
-- [The HTTP server (the `server` block of the `http` group)](#the-http-server-the-server-block-of-the-http-group)
-- [Groups (SConcur 0.12)](#groups-sconcur-012)
+- [The HTTP server](#the-http-server)
+- [The `rabbitmq` group and its consumers](#the-rabbitmq-group-and-its-consumers)
 - [The `ws` group](#the-ws-group)
-- [The WebSocket server (the `server` block of the `ws` group)](#the-websocket-server-the-server-block-of-the-ws-group)
-- [The WebSocket protocol (`sconcur.ws`)](#the-websocket-protocol-sconcurws)
+- [The WebSocket server](#the-websocket-server)
+- [The WebSocket protocol](#the-websocket-protocol)
+- [The task pool](#the-task-pool)
 
 ## General
 
@@ -40,15 +43,39 @@ installs the adapters in every process.
 | `SCONCUR_HTTP_RESTART_BACKOFF_MS` | `200` | initial restart backoff, ms |
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | maximum restart backoff, ms |
 
+Not from ENV: `workerScript=base_path('artisan')`, `phpArgs=[]`, and
+`runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
+
+## Groups
+
+One master supervises several unlike pools under one lock and one journal, so
+`workerScript`, `workerCount`, `workerArgs` and `server` live not at the top level of the
+config but in an element of the `groups` list.
+
+A group's `server` block is forwarded to its workers' argv verbatim, which is why all
+three commands — `http:start`, `rabbitmq:start` and `ws:start` — declare those flags:
+artisan rejects what is not declared. What reads them back is `HttpServer::fromArgs`,
+`QueueConsumer::fromArgs` and `WsServer::fromArgs`. Anything that is not a scalar (the
+queue list) the master JSON-encodes on the way.
+
+A run without a master has nobody to forward it, so in that case the command takes the
+same `server` block out of its own group's config. The group is looked up by what it
+starts rather than by name — otherwise renaming a group would quietly leave a standalone
+run on the library's defaults.
+
+A `workerCount` below one is how a pool is turned off: the group does not reach the master
+config at all. A zero would not do it — to the master `workerCount: 0` means one worker per
+CPU (`WorkerGroup`, `Cpu::count()`).
+
 ## The `http` group
 
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_HTTP_WORKER_COUNT` | `2` | workers in the group (0 = one per CPU) |
 
-`workerCount` is a key of the group, not of the master, hence a table of its own.
+## The HTTP server
 
-## The HTTP server (the `server` block of the `http` group)
+The `server` block of the `http` group.
 
 | ENV | Default | What it does |
 |---|---|---|
@@ -64,26 +91,30 @@ installs the adapters in every process.
 | `SCONCUR_HTTP_HANDLER_TIMEOUT_MS` | `60000` | request handling timeout, ms |
 | `SCONCUR_HTTP_SERVER_SHUTDOWN_TIMEOUT_MS` | `5000` | server stop timeout, ms |
 
-Not from ENV: `workerScript=base_path('artisan')`,
-`workerArgs=['sconcur:servers:http:start']`, `phpArgs=[]`, and
-`runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
+## The `rabbitmq` group and its consumers
 
-## Groups (SConcur 0.12)
+How the pool works is in [queue.md](queue.md).
 
-One master supervises several unlike pools under one lock and one journal, so
-`workerScript`, `workerCount`, `workerArgs` and `server` live not at the top level of the
-config but in an element of the `groups` list.
+| ENV | Default | What it does |
+|---|---|---|
+| `SCONCUR_RABBITMQ_WORKER_COUNT` | `0` | processes in the pool; below `1` the group does not reach the master config |
+| `SCONCUR_RABBITMQ_QUEUE` | `default` | the queue the pool reads |
+| `SCONCUR_RABBITMQ_QUEUE_CONSUMERS` | `1` | that queue's weight — how many consumers it gets |
+| `SCONCUR_RABBITMQ_PREFETCH_COUNT` | `1` | unacknowledged messages per consumer |
+| `SCONCUR_RABBITMQ_HANDLER_TIMEOUT_MS` | `0` | deadline for one message in the handler; `0` — none |
+| `SCONCUR_RABBITMQ_REQUEUE_ON_FAILURE` | `false` | requeue a failed message instead of dead-lettering it |
+| `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | drain and exit after N messages |
+| `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | drain and exit after N seconds |
+| `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | drain and exit on heap size |
+| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | worker memory limit, MiB |
+| `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | the `config/queue.php` connection the jobs run on |
+| `SCONCUR_RABBITMQ_TRIES` | `1` | attempts before `failed_jobs` |
+| `SCONCUR_RABBITMQ_BACKOFF` | `0` | delay before a retry, seconds |
+| `SCONCUR_RABBITMQ_DSN` | — | the broker, as `amqp://user:pass@host:5672/%2f` |
 
-A group's `server` block is forwarded to its workers' argv verbatim, which is why all
-three commands — `http:start`, `rabbitmq:start` and `ws:start` — declare those flags:
-artisan rejects what is not declared. What reads them back is `HttpServer::fromArgs`,
-`QueueConsumer::fromArgs` and `WsServer::fromArgs`. Anything that is not a scalar (the queue list) the master
-JSON-encodes on the way.
-
-A run without a master has nobody to forward it, so in that case the command takes the
-same `server` block out of its own group's config. The group is looked up by what it
-starts rather than by name — otherwise renaming a group would quietly leave a standalone
-run on the library's defaults.
+The skeleton describes one queue because that is all it can know. A list of any length and
+its weights are what the application writes into `sconcur.queue.rabbitmq.queues` of the
+published file, and that list is also what `sconcur:rabbitmq:declare` declares.
 
 ## The `ws` group
 
@@ -91,7 +122,9 @@ run on the library's defaults.
 |---|---|---|
 | `SCONCUR_WS_WORKER_COUNT` | `0` | workers in the group; below 1 leaves the group out of the config |
 
-## The WebSocket server (the `server` block of the `ws` group)
+## The WebSocket server
+
+The `server` block of the `ws` group.
 
 | ENV | Default | What it does |
 |---|---|---|
@@ -115,7 +148,9 @@ every client on a timer — there is no setting of it a ws pool wants.
 The path is compared without the query string, so `/app/{key}?protocol=7&client=js`
 matches and a wrong key is a `404` on the handshake, before PHP sees it.
 
-## The WebSocket protocol (`sconcur.ws`)
+## The WebSocket protocol
+
+The `sconcur.ws` section. How the pool works is in [websocket.md](websocket.md).
 
 | ENV | Default | What it does |
 |---|---|---|
@@ -140,6 +175,26 @@ gets control back on a delivery or on this timeout, and that is when it notices 
 connection is gone and stands down — which is what lets the server's graceful shutdown
 finish. It therefore has to stay well below the group's `shutdownTimeoutMs`.
 
-A member list kept in one process is correct only while there is one process. Under a pool
-`memory` is not incomplete but wrong, every worker answering with its own subscribers —
-`auto` picks `cache` there, and an explicit `memory` is reported by the start command.
+`SCONCUR_WS_PRESENCE_STORE` set to `memory` is correct only while there is one process.
+Under a pool it is not incomplete but wrong, every worker answering with its own
+subscribers — `auto` picks `cache` there, and an explicit `memory` is reported by the start
+command.
+
+## The task pool
+
+How the pool works is in [task-pool.md](task-pool.md).
+
+| ENV | Default | What it does |
+|---|---|---|
+| `SCONCUR_TASKS_CONTROL_KEY` | `sconcur:tasks:control` | the cache key `stop` and `restart` reach the pool through |
+| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | flock path; keeps a second copy of a task from starting |
+| `SCONCUR_TASKS_MEMORY_MB` | `256` | process memory limit; past it, an exit with `EXIT_RESTART` |
+| `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | how finely a pause is cut, that is how fast the pool notices a signal |
+| `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `1000` | automatic coroutine switching; `0` — off |
+| `SCONCUR_TASKS_REPORT_TICKS` | `true` | show the ticks in the panel's `consumers` section |
+| `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_SECONDS` | `20` | how long to wait for the running ticks before the group is unwound |
+| `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_MS` | `30000` | how long the master waits for the pool's worker; must exceed the previous one |
+
+The pool's group is one worker and declares `restartPolicy: on-failure` rather than
+inheriting the master's `always`, so that a `sconcur:tasks:stop`, which exits zero, is not
+undone by a replacement within the second.

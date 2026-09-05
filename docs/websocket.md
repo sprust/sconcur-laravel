@@ -57,8 +57,7 @@ flowchart TB
     rabbit -->|"Queue::consume in the subscriber coroutine"| ws
 ```
 
-The consumer pool and the task pool publish to the same bus through the same driver; they
-are left off the diagram rather than drawing one arrow three times.
+The consumer pool and the task pool publish to the same bus through the same driver.
 
 ## Examples
 
@@ -83,6 +82,37 @@ SCONCUR_WS_APP_SECRET=some-private-secret
 
 The key and the secret are not repeated anywhere else: the broadcast driver, the
 connection handler and the group's path all read them from `config('sconcur.ws')`.
+
+The proxy in front needs a `location` of its own for the upgrade. An upgraded connection is
+long-lived, so the ordinary block's timeouts would cut every client loose once a minute:
+
+```nginx
+# `map` belongs to the http level, outside the server block: "upgrade" while the client
+# asks for one and "close" otherwise, so an ordinary request is not told to switch.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+location /app/ {
+    proxy_pass http://127.0.0.1:28090;
+
+    proxy_http_version 1.1;
+
+    proxy_set_header Upgrade    $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+```
+
+The location has to match `SCONCUR_WS_PATH_PREFIX`; the key follows it in the path.
 
 ```js
 // resources/js/echo.js — nothing of its own, an ordinary pusher client
@@ -585,17 +615,13 @@ What each line answers:
 | subscribe | the channel was accepted. On a public channel that happens without `/broadcasting/auth`; a `private-` one needs a signature, which is a separate check |
 | delivery | every message came back, numbered from one, with nothing missing and nothing twice — so the bus carries the event from a publishing process to the worker holding the socket |
 
-Three things worth knowing before this is wired into a health check:
-
-- **`--host` is where the pool listens.** Through the proxy it is the public host, and then
-  the check covers the proxy's upgrade block as well; against the pool's own port it does
-  not, and a check that passes there while browsers fail is exactly the proxy's doing.
-- **The channel is public**, so the check never touches the application's authorization. To
-  cover a signature too, ask `/broadcasting/auth` for one and put it into
-  `pusher:subscribe` — see [Channels and signatures](#channels-and-signatures).
-- **A pool larger than one worker is checked one worker at a time.** The connection lands
-  on whichever worker the kernel gives it, and the delivery proves the bus regardless; to
-  see every worker, run the check as many times as there are workers and collect the pids.
+What it leaves out. `--host` through the proxy covers the proxy's upgrade block as well,
+and against the pool's own port it does not — a check that passes there while browsers fail
+is the proxy's doing. The channel is public, so authorization is untouched; to cover a
+signature, ask `/broadcasting/auth` for one and put it into `pusher:subscribe`. And the
+connection lands on whichever worker the kernel gives it, so a pool larger than one worker
+is covered by running the check as many times as there are workers and collecting the
+pids.
 
 This repository's demo carries the same walk as a standalone script rather than a command,
 because the demo publishes over HTTP to show the process boundary: `make ws-check` and
@@ -777,20 +803,13 @@ and a leave are worth announcing.
 
 ## Configuration
 
-The `ws` group in `config('sconcur.master.groups')` and the `config('sconcur.ws')` section.
-The full list of ENV variables is in [configuration.md](configuration.md).
+The `ws` group in `config('sconcur.master.groups')` and the `config('sconcur.ws')` section,
+both listed in [configuration.md](configuration.md#the-ws-group).
 
-Two values that cannot be set "the way http has them":
-
-| Option | Value | Why |
-|---|---|---|
-| `handlerTimeoutMs` | `0` | it is a deadline on the whole life of a connection rather than on a frame: anything above zero cuts every client loose on a timer |
-| `idleTimeoutMs` | `0` | a silent client is normal; liveness is kept by `pingIntervalMs` |
-
-`path` is the exact string `/app/{app_key}`. The query string is not part of the
-comparison, so `/app/{key}?protocol=7` matches, while a wrong key gets `404` on the
-handshake without raising a connection. An empty string would accept any path — then only
-the handler checks the key.
+Two values cannot be set the way the `http` group has them. `handlerTimeoutMs` is hard-coded
+to zero because here it is a deadline on the whole life of a connection rather than on a
+frame, and anything above zero cuts every client loose on a timer. `idleTimeoutMs` defaults
+to zero because a silent client is normal — liveness is kept by `pingIntervalMs`.
 
 ## What it does not do
 

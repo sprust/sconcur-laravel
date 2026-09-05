@@ -101,7 +101,8 @@ exception would put out all the others.
 Tasks are resolved from the container by class name, so they are ordinary services with
 dependency injection, and the config caches like any other.
 
-The full list of ENV variables is in [configuration.md](configuration.md).
+The full list of ENV variables is in
+[configuration.md](configuration.md#the-task-pool).
 
 ## Commands
 

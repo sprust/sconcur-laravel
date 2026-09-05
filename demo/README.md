@@ -160,8 +160,8 @@ The **Pool sizes** panel writes the numbers to `demo/storage/app/scaling.json`, 
 affected groups to be rolled. `ws` is one of them: at one worker the bus still carries
 every broadcast, and above one two browsers land on different workers, which is when it
 starts carrying them somewhere the publisher could not reach on its own. Zero takes the
-group out of the config, like it does for `rabbitmq`. The roll itself is done by `ScalingTask` in the periodic
-task pool, not by the request and not by a queued job:
+group out of the config, like it does for `rabbitmq`. The roll itself is done by
+`ScalingTask` in the periodic task pool, not by the request and not by a queued job:
 
 - reload waits for the roll to finish. An HTTP worker calling it would still be inside
   that wait when its own turn to be replaced came — the server waiting for the handler

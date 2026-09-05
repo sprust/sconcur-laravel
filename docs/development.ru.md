@@ -18,7 +18,7 @@ make setup
 |---|---|
 | `scl-nginx` | единственный опубликованный вход; проксирует в пул `http` |
 | `scl-php` | только CLI: composer, artisan, phpunit, анализаторы. php-fpm здесь нет — HTTP отдаёт сам SConcur |
-| `scl-workers` | supervisor, под ним мастер SConcur с группами `http`, `rabbitmq` и `tasks` |
+| `scl-workers` | supervisor, под ним мастер SConcur с группами `http`, `rabbitmq`, `ws` и `tasks` |
 | `scl-mysql` | MySQL 8.4, данные в `tmpfs` — стираются при пересоздании контейнера |
 | `scl-rabbitmq` | RabbitMQ 4.1 с панелью, тоже в `tmpfs` |
 
@@ -55,6 +55,6 @@ make test c=--filter=DsnTest          # один тест
 `workbench/` живёт под `orchestra/testbench` и принадлежит тестам. `demo/` — отдельное
 минимальное приложение со своим `bootstrap/app.php`, потому что ему нужен
 `AsyncApplication`, а testbench собирает `Illuminate\Foundation\Application` сам.
-Своего `composer.json` у демо нет: `demo/vendor` — симлинк на корневой `vendor`, классы
-автозагружаются через `autoload-dev` корня. Один install, один лок, и пакет с
-приложением, которое его демонстрирует, не могут разъехаться.
+Ничего там не устанавливается: `demo/vendor` — симлинк на корневой `vendor`, а классы
+автозагружаются через `autoload-dev` корня (`Demo\App\` → `demo/app/`). Один install,
+один лок, и пакет с приложением, которое его демонстрирует, не могут разъехаться.

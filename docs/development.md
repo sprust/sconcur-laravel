@@ -19,7 +19,7 @@ After that the demo answers on `http://localhost:48081` (the port is `APP_PORT` 
 |---|---|
 | `scl-nginx` | the only published entry point; proxies to the `http` pool |
 | `scl-php` | CLI only: composer, artisan, phpunit, the analyzers. There is no php-fpm here — HTTP is served by SConcur itself |
-| `scl-workers` | supervisor, and under it the SConcur master with the `http`, `rabbitmq` and `tasks` groups |
+| `scl-workers` | supervisor, and under it the SConcur master with the `http`, `rabbitmq`, `ws` and `tasks` groups |
 | `scl-mysql` | MySQL 8.4, data in `tmpfs` — wiped when the container is recreated |
 | `scl-rabbitmq` | RabbitMQ 4.1 with its panel, in `tmpfs` as well |
 
@@ -55,7 +55,7 @@ to the live MySQL and RabbitMQ.
 
 `workbench/` lives under `orchestra/testbench` and belongs to the tests. `demo/` is a
 separate minimal application with a `bootstrap/app.php` of its own, because it needs
-`AsyncApplication` while testbench builds `Illuminate\Foundation\Application` itself. It
-has no `composer.json`: `demo/vendor` is a symlink to the root `vendor` and its classes
-are autoloaded through the root's `autoload-dev`. One install, one lock, and the package
-and the application demonstrating it cannot drift apart.
+`AsyncApplication` while testbench builds `Illuminate\Foundation\Application` itself.
+Nothing is installed there: `demo/vendor` is a symlink to the root `vendor` and its classes
+are autoloaded through the root's `autoload-dev` (`Demo\App\` → `demo/app/`). One install,
+one lock, and the package and the application demonstrating it cannot drift apart.

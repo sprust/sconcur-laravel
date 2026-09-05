@@ -16,7 +16,7 @@ re-declared somebody else's queue with its own flags would drop the channel with
 instead of reading. So `sconcur:rabbitmq:declare` has to run before the first publish and
 before the pool starts, and it belongs on every install and deploy path rather than being
 run by hand once. In this repository it is the `make queues-declare` target, called by
-`make setup`; in an application its place is on every install and deploy path.
+`make setup`.
 
 What happens if it is skipped:
 
@@ -33,9 +33,10 @@ What happens if it is skipped:
 
 The command declares what is listed in `sconcur.queue.rabbitmq.queues`, with the flags
 `durable`, not `exclusive`, not `autoDelete` and no arguments — the same ones
-`vladimir-yuldashev/laravel-queue-rabbitmq` uses (see [Compatibility](#compatibility)). Running it again
-is harmless: declaring an existing queue with the same flags changes nothing, which is why
-it is kept on the deploy path without checking whether it has run before.
+`vladimir-yuldashev/laravel-queue-rabbitmq` uses (see [Compatibility](#compatibility)).
+Running it again is harmless: declaring an existing queue with the same flags changes
+nothing, which is why it is kept on the deploy path without checking whether it has run
+before.
 
 The wait queues are none of its business: they are created by the delayed publish that
 needs them — see [The connection](#the-connection).
@@ -100,38 +101,15 @@ strictly sequential loop, one job at a time, and its `sleep()` blocks the proces
 Writing to `failed_jobs` is done not by `Worker` but by the `queue:work` command the pool
 replaces — so `ConsumerRunner` attaches the same `JobFailed` listener itself.
 
-| ENV | Default | What it does |
-|---|---|---|
-| `SCONCUR_RABBITMQ_WORKER_COUNT` | `0` | processes in the pool; below `1` the group does not reach the master config at all |
-| `SCONCUR_RABBITMQ_QUEUE` | `default` | the queue the pool reads |
-| `SCONCUR_RABBITMQ_QUEUE_CONSUMERS` | `1` | that queue's weight — how many consumers it gets |
-| `SCONCUR_RABBITMQ_PREFETCH_COUNT` | `1` | unacknowledged messages per consumer |
-| `SCONCUR_RABBITMQ_HANDLER_TIMEOUT_MS` | `0` | deadline for one message in the handler; `0` — none |
-| `SCONCUR_RABBITMQ_REQUEUE_ON_FAILURE` | `false` | requeue a failed message instead of dead-lettering it |
-| `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | drain and exit after N messages |
-| `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | drain and exit after N seconds |
-| `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | drain and exit on heap size |
-| `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | the `config/queue.php` connection the jobs run on |
-| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | worker memory limit, MiB |
-| `SCONCUR_RABBITMQ_TRIES` | `1` | attempts before `failed_jobs` |
-| `SCONCUR_RABBITMQ_BACKOFF` | `0` | delay before a retry, seconds |
-
-A zero in `SCONCUR_RABBITMQ_WORKER_COUNT` does not mean "no workers": to the master
-`workerCount: 0` is one worker per CPU (`WorkerGroup`, `Cpu::count()`). So the pool is
-turned off not by a zero in the group but by the group not being in the config.
-
-The skeleton describes one queue because that is all it can know: the queue list and the
-weights are what the application sets in the published file, where `queues` may be a list
-of any length. It is also what `sconcur:rabbitmq:declare` declares, reading
-`sconcur.queue.rabbitmq.queues`.
-
 A queue's weight is the analogue of the number of `queue:work` processes on it: how many
 consumers it gets, each on its own channel. The handler still runs in its own coroutine
 per message.
 
-`handlerTimeoutMs` is zero by default because a deadline does not slow down the job it
-catches, it refuses it — and that is for the application, which knows its jobs, to decide.
-
 `handlerTimeoutMs` unwinds a hung handler and refuses its message; the worker takes the
-next one. `WorkerOptions::$timeout` is deliberately zero next to it: the Laravel worker's
-`SIGALRM` would kill the process along with every handler running beside it.
+next one. It is off by default because a deadline does not slow down the job it catches,
+it refuses it, and that is for the application, which knows its jobs, to decide.
+`WorkerOptions::$timeout` is deliberately zero next to it: the Laravel worker's `SIGALRM`
+would kill the process along with every handler running beside it.
+
+The pool's settings are in
+[configuration.md](configuration.md#the-rabbitmq-group-and-its-consumers).

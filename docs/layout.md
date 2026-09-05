@@ -5,30 +5,31 @@ English | [Русский](layout.ru.md)
 What lies where in the repository.
 
 ```
-config/sconcur.php        — the config (panel_host, scoped_services, master + groups, queue, ws, tasks)
-src/SConcurServiceProvider — the provider (commands + wiring the adapters into the worker)
-src/Console/              — artisan commands
-src/Servers/              — MasterRunner (a wrapper over SConcur\Worker\MasterCli)
-src/Queue/Rabbitmq/       — the queue driver and the consumer pool (Connector, Queue, Job, ConsumerRunner)
-src/Database/Mysql/       — the sconcur_mysql connection (Connector, Connection, Dsn, TransactionStack)
-src/Tasks/                — the periodic task pool (TaskPool, TaskPoolController, TaskRegistry,
-                            CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
-src/Tasks/Control/        — the control channel through the cache (stop/restart from another container)
-src/Http/                 — HttpServerRunner + LaravelHttpHandler (build + serve)
-src/Ws/                   — the WebSocket pool (WsServerRunner, ConnectionHandler,
-                            ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
-src/Foundation/           — AsyncApplication, ScopedService, ScopedServiceProxy
-src/Config/               — AsyncConfig (a per-coroutine config()->set overlay)
-src/Events/               — AsyncDispatcher (per-coroutine defer())
-src/Routing/              — AsyncRouter (per-coroutine current route/request)
-src/Translation/          — AsyncTranslator (per-coroutine locale)
-src/View/                 — AsyncViewFactory (per-coroutine View::share)
-docs/                     — this documentation, one topic per bilingual pair
+config/sconcur.php             — the config (panel_host, scoped_services, master + groups, queue, ws, tasks)
+src/SConcurServiceProvider.php — the provider (commands + wiring the adapters into the worker)
+src/Console/                   — artisan commands
+src/Servers/                   — MasterRunner (a wrapper over SConcur\Worker\MasterCli)
+src/Queue/Rabbitmq/            — the queue driver and the consumer pool (Connector, Queue, Job, ConsumerRunner)
+src/Database/                  — TransactionStore (the transaction nesting level, per coroutine)
+src/Database/Mysql/            — the sconcur_mysql connection (Connector, Connection, Dsn, TransactionStack)
+src/Tasks/                     — the periodic task pool (TaskPool, TaskPoolController, TaskRegistry,
+                                 CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
+src/Tasks/Control/             — the control channel through the cache (stop/restart from another container)
+src/Http/                      — HttpServerRunner + LaravelHttpHandler (build + serve)
+src/Ws/                        — the WebSocket pool (WsServerRunner, ConnectionHandler,
+                                 ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
+src/Foundation/                — AsyncApplication, ScopedService, ScopedServiceProxy
+src/Config/                    — AsyncConfig (a per-coroutine config()->set overlay)
+src/Events/                    — AsyncDispatcher (per-coroutine defer())
+src/Routing/                   — AsyncRouter (per-coroutine current route/request)
+src/Translation/               — AsyncTranslator (per-coroutine locale)
+src/View/                      — AsyncViewFactory (per-coroutine View::share)
+docs/                          — this documentation, one topic per bilingual pair
 
-demo/                     — the demo application the master serves
-workbench/                — the testbench application the tests run against
-tests/                    — the package's tests
-docker/                   — the images, nginx and supervisor of the development environment
+demo/                          — the demo application the master serves
+workbench/                     — the testbench application the tests run against
+tests/                         — the package's tests
+docker/                        — the images, nginx and supervisor of the development environment
 ```
 
 The application is coroutine-scoped always, with no switch and no mode detection. The

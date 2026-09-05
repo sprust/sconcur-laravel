@@ -50,16 +50,19 @@ over it. `unix_socket` is honoured too, as `unix(/path/to.sock)`.
 `parseTime` is not sent, and would do nothing if it were: the extension accepts it and
 ignores it, and `DATE`/`DATETIME`/`TIMESTAMP` always arrive RFC3339.
 
-| ENV | Default | What it does |
-|---|---|---|
-| `SCONCUR_DB_TIMEOUT_MS` | `30000` | deadline for one statement; for a cursor, for its whole life |
-| `SCONCUR_DB_MAX_OPEN_CONNS` | `20` | the pool size in the extension; `0` is not "no limit", it is the extension's own 32 |
-| `SCONCUR_DB_MAX_IDLE_CONNS` | `0` | accepted and not applied: the pool keeps every idle connection up to the cap. It still keys the pool, so two values mean two pools |
-| `SCONCUR_DB_CONN_MAX_LIFETIME_MS` | `0` | connection lifetime; `0` means no limit |
+Four more keys of the same connection array tune the pool. They are read by `Connector`
+and passed to the extension; where the array has none, the extension's own default stands.
 
-A bounded pool is not caution: every concurrent statement takes a connection of its own,
-so an unbounded pool walks a fan-out straight into the server's `max_connections`
-(MySQL error 1040).
+| Key | Default | What it does |
+|---|---|---|
+| `timeout_ms` | `30000` (the extension's) | deadline for one statement; for a cursor, for its whole life |
+| `max_open_conns` | `20` (the package's) | the pool size in the extension; `0` is not "no limit", it is the extension's own 32 |
+| `max_idle_conns` | — | accepted and not applied: the pool keeps every idle connection up to the cap. It still keys the pool, so two values mean two pools |
+| `conn_max_lifetime_ms` | — | connection lifetime; absent means no limit |
+
+`max_open_conns` is the one default the package overrides, and a bounded pool is not
+caution: every concurrent statement takes a connection of its own, so an unbounded pool
+walks a fan-out straight into the server's `max_connections` (MySQL error 1040).
 
 ## Which connection the application uses
 
@@ -111,9 +114,9 @@ only routes to the right one. It is registered always rather than by process typ
 a coroutine it has one manager of its own and behaves indistinguishably from the stock
 one. Without it, a single per-process singleton would key its records by connection name
 rather than by whoever opened the transaction, and one coroutine's commit would run a
-neighbour's `afterCommit` while that neighbour's transaction was still open. This is not
-theory: `Model::saveOrFail()` is a transaction, so creating a model the ordinary way
-already lands there.
+neighbour's `afterCommit` while that neighbour's transaction was still open.
+`Model::saveOrFail()` is a transaction, so creating a model the ordinary way already lands
+there.
 
 ## Differences from PDO
 
@@ -151,8 +154,9 @@ already lands there.
 - Rows always arrive as `stdClass` — that is Laravel's default `fetchMode`, and the
   connection does not let it be changed anyway.
 - **Column order within a row is not guaranteed.** PDO returns them in `SELECT` order;
-  here a row crosses the PHP↔extension boundary as a msgpack map, and a map does not preserve key
-  order — so two identical queries in a row give different field orders. Reading by name
+  here a row crosses the PHP↔extension boundary as a msgpack map, and a map does not
+  preserve key order — so two identical queries in a row give different field orders.
+  Reading by name
   works as usual, so the ORM, `->id`, `->toArray()` and `where` never notice. What does
   notice is whatever relies on the order: `array_values($row)`, destructuring
   `[$a, $b] = array_values(...)`, `fputcsv` of a row as-is, comparing two rows with `==`
