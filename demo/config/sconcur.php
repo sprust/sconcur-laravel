@@ -103,13 +103,13 @@ return [
                 ],
             ],
 
-            // The ws pool. Off unless asked for, like the rabbitmq group; two workers by
-            // default so the page is served by a pool rather than by one process, which
-            // is what makes the fanout bus do something visible.
-            (int) env('SCONCUR_WS_WORKER_COUNT', 0) < 1 ? null : [
+            // The ws pool. Off unless asked for, like the rabbitmq group — and settable
+            // from the page: raise it above one to watch the fanout bus do something
+            // visible, with two browsers landing on different workers.
+            $scaling['wsWorkers'] < 1 ? null : [
                 'name'         => 'ws',
                 'workerScript' => base_path('artisan'),
-                'workerCount'  => (int) env('SCONCUR_WS_WORKER_COUNT'),
+                'workerCount'  => $scaling['wsWorkers'],
                 'workerArgs'   => ['sconcur:servers:ws:start'],
                 'server'       => [
                     'address'   => '0.0.0.0:' . env('SCONCUR_WS_PORT', 28090),

@@ -27,7 +27,7 @@ flowchart TB
     http["group http — 2 workers"]
     rabbit["group rabbitmq — 1 worker, 4 consumers"]
     tasks["group tasks — 1 worker"]
-    ws["group ws — 2 workers"]
+    ws["group ws — 1 worker"]
     mysql["MySQL"]
     broker["RabbitMQ"]
 
@@ -73,7 +73,7 @@ by hand: `make demo-reset`.
 | `GET /api/heartbeats` | the counter the periodic task pool bumps |
 | `GET /api/scaling` / `POST /api/scaling` | how many processes each pool runs and how many consumers the queue gets in each; a change rolls only the groups it affects |
 | `GET /api/ws` | what the page needs to open its socket: the app key and the path, never the secret |
-| `POST /api/ws/broadcast` | broadcasts `DemoBroadcast` on the `demo` channel; `others=1` adds `toOthers()` |
+| `POST /api/ws/broadcast` | broadcasts `count` copies of `DemoBroadcast` on the `demo` channel, each numbered; `others=1` adds `toOthers()` |
 | `GET /api/telemetry` | the master's panel, folded into what the page draws |
 
 The sequential leg of `/api/concurrent` is skipped when `n × ms` would exceed 3 s: it
@@ -91,8 +91,15 @@ The client is written against the wire protocol with the browser's own `WebSocke
 than through `laravel-echo`: the demo has no bundler, and the frames are the same ones Echo
 sends. A real application uses Echo — the package README shows the config it needs.
 
+The badge beside the heading says what is true now — the log below only says what
+happened. It carries the socket id once the handshake is through, and since a socket id is
+the worker's pid and a counter, it also names the ws worker this browser landed on.
+
+**messages** is how many to publish in one press. Each arrives as `<number> <text>`, so a
+burst reads as a burst and its order is visible rather than guessed.
+
 The **to others** box adds `->toOthers()`, so the browser that pressed the button is the
-one that does not see the message. With two tabs open the difference is visible; with one,
+one that does not see the messages. With two tabs open the difference is visible; with one,
 nothing arrives, which is the point.
 
 Only the public `demo` channel is used here. Private and presence channels are authorized
@@ -102,7 +109,10 @@ through `/broadcasting/auth` against an authenticated user, and the demo has no 
 
 The **Pool sizes** panel writes the numbers to `demo/storage/app/scaling.json`, which
 `demo/config/sconcur.php` reads while it builds the master config, and asks for the
-affected groups to be rolled. The roll itself is done by `ScalingTask` in the periodic
+affected groups to be rolled. `ws` is one of them: at one worker the bus still carries
+every broadcast, and above one two browsers land on different workers, which is when it
+starts carrying them somewhere the publisher could not reach on its own. Zero takes the
+group out of the config, like it does for `rabbitmq`. The roll itself is done by `ScalingTask` in the periodic
 task pool, not by the request and not by a queued job:
 
 - reload waits for the roll to finish. An HTTP worker calling it would still be inside

@@ -32,10 +32,15 @@ class ScalingSettings
 
     public const int RABBITMQ_COROUTINES_MAX = 32;
 
+    /** Zero here means the same as it does above: no ws group in the master config. */
+    public const int WS_WORKERS_MIN = 0;
+
+    public const int WS_WORKERS_MAX = 4;
+
     /**
      * The values in force, defaults filled in from ENV.
      *
-     * @return array{httpWorkers: int, rabbitmqWorkers: int, rabbitmqCoroutines: int}
+     * @return array{httpWorkers: int, rabbitmqWorkers: int, rabbitmqCoroutines: int, wsWorkers: int}
      */
     public static function current(): array
     {
@@ -47,7 +52,7 @@ class ScalingSettings
      *
      * @param array<string, mixed> $values
      *
-     * @return array{httpWorkers: int, rabbitmqWorkers: int, rabbitmqCoroutines: int}
+     * @return array{httpWorkers: int, rabbitmqWorkers: int, rabbitmqCoroutines: int, wsWorkers: int}
      */
     public static function store(array $values): array
     {
@@ -73,7 +78,8 @@ class ScalingSettings
      * @return array{
      *     httpWorkers: array{min: int, max: int},
      *     rabbitmqWorkers: array{min: int, max: int},
-     *     rabbitmqCoroutines: array{min: int, max: int}
+     *     rabbitmqCoroutines: array{min: int, max: int},
+     *     wsWorkers: array{min: int, max: int}
      * }
      */
     public static function limits(): array
@@ -82,6 +88,7 @@ class ScalingSettings
             'httpWorkers'        => ['min' => self::HTTP_WORKERS_MIN, 'max' => self::HTTP_WORKERS_MAX],
             'rabbitmqWorkers'    => ['min' => self::RABBITMQ_WORKERS_MIN, 'max' => self::RABBITMQ_WORKERS_MAX],
             'rabbitmqCoroutines' => ['min' => self::RABBITMQ_COROUTINES_MIN, 'max' => self::RABBITMQ_COROUTINES_MAX],
+            'wsWorkers'          => ['min' => self::WS_WORKERS_MIN, 'max' => self::WS_WORKERS_MAX],
         ];
     }
 
@@ -153,6 +160,7 @@ class ScalingSettings
             'httpWorkers'        => (int) env('SCONCUR_HTTP_WORKER_COUNT', 2),
             'rabbitmqWorkers'    => (int) env('SCONCUR_RABBITMQ_WORKER_COUNT', 1),
             'rabbitmqCoroutines' => (int) env('SCONCUR_RABBITMQ_QUEUE_CONSUMERS', 4),
+            'wsWorkers'          => (int) env('SCONCUR_WS_WORKER_COUNT', 1),
         ];
 
         $path = self::path();
@@ -169,7 +177,7 @@ class ScalingSettings
     /**
      * @param array<string, mixed> $values
      *
-     * @return array{httpWorkers: int, rabbitmqWorkers: int, rabbitmqCoroutines: int}
+     * @return array{httpWorkers: int, rabbitmqWorkers: int, rabbitmqCoroutines: int, wsWorkers: int}
      */
     protected static function clamp(array $values): array
     {
@@ -188,6 +196,10 @@ class ScalingSettings
                     self::RABBITMQ_COROUTINES_MIN,
                 ),
                 self::RABBITMQ_COROUTINES_MAX,
+            ),
+            'wsWorkers' => min(
+                max((int) ($values['wsWorkers'] ?? self::WS_WORKERS_MIN), self::WS_WORKERS_MIN),
+                self::WS_WORKERS_MAX,
             ),
         ];
     }

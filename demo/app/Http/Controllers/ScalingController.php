@@ -9,8 +9,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Changing the size of the pools from the page: how many worker processes the HTTP and
- * consumer groups run, and how many consumers the queue gets in each of them.
+ * Changing the size of the pools from the page: how many worker processes the HTTP,
+ * consumer and ws groups run, and how many consumers the queue gets in each of them.
  *
  * The numbers are stored, and the roll that puts them in force is left to the task pool
  * (ScalingTask) — see there for why it cannot happen in this request.
@@ -42,6 +42,10 @@ class ScalingController
                 'required', 'integer',
                 'min:' . $limits['rabbitmqCoroutines']['min'], 'max:' . $limits['rabbitmqCoroutines']['max'],
             ],
+            'wsWorkers' => [
+                'required', 'integer',
+                'min:' . $limits['wsWorkers']['min'], 'max:' . $limits['wsWorkers']['max'],
+            ],
         ]);
 
         $before = ScalingSettings::current();
@@ -59,6 +63,10 @@ class ScalingController
             || $after['rabbitmqCoroutines'] !== $before['rabbitmqCoroutines']
         ) {
             $groups[] = 'rabbitmq';
+        }
+
+        if ($after['wsWorkers'] !== $before['wsWorkers']) {
+            $groups[] = 'ws';
         }
 
         ScalingSettings::requestReload($groups);

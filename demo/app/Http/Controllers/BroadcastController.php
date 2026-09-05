@@ -9,40 +9,48 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Publishes one event to the ws pool.
+ * Publishes events to the ws pool.
  *
  * It answers from an http worker and the page is connected to a ws worker, so a message
- * arriving on the socket is the whole demonstration: the two are different processes, and
- * what carried the event between them is the bus.
+ * arriving back on the socket is the whole demonstration: the two are different
+ * processes, and what carried the event between them is the bus.
  */
 class BroadcastController
 {
+    protected const int MAX_COUNT = 50;
+
     public function store(Request $request): JsonResponse
     {
-        $text = trim((string) $request->input('text', ''));
+        $data = $request->validate([
+            'text'   => ['required', 'string', 'max:200'],
+            'count'  => ['nullable', 'integer', 'min:1', 'max:' . self::MAX_COUNT],
+            'others' => ['nullable', 'boolean'],
+        ]);
 
-        if ($text === '') {
-            return response()->json(['message' => 'text is required'], 422);
-        }
+        $count = (int) ($data['count'] ?? 1);
 
-        $workerPid = (int) getmypid();
+        $workerPid = getmypid() ?: 0;
 
-        $pending = broadcast(new DemoBroadcast(
-            text: mb_substr($text, 0, 200),
-            source: 'http worker',
-            workerPid: $workerPid,
-            sentAt: microtime(true),
-        ));
+        for ($number = 1; $number <= $count; $number++) {
+            // Numbered on the way out, so the page can see the order they arrive in — a
+            // burst that comes back shuffled would otherwise look like one message.
+            $pending = broadcast(new DemoBroadcast(
+                text: $number . ' ' . $data['text'],
+                source: 'http worker',
+                workerPid: $workerPid,
+                sentAt: microtime(true),
+            ));
 
-        // toOthers() reads the X-Socket-ID header the page sends and puts it on the
-        // message, and every ws worker then skips that one connection. With the box
-        // ticked the sender is the only browser that does not see its own message.
-        if ($request->boolean('others')) {
-            $pending->toOthers();
+            // toOthers() reads the X-Socket-ID header the page sends and puts it on the
+            // message; every ws worker then skips that one connection. With the box
+            // ticked the sender is the only browser that does not see its own messages.
+            if ($request->boolean('others')) {
+                $pending->toOthers();
+            }
         }
 
         return response()->json([
-            'published' => true,
+            'published' => $count,
             'workerPid' => $workerPid,
             'toOthers'  => $request->boolean('others'),
         ]);
