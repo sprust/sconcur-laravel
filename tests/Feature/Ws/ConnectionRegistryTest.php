@@ -28,8 +28,14 @@ class ConnectionRegistryTest extends BaseTestCase
         $this->register('1.2');
         $this->register('1.3');
 
-        $this->registry->subscribe(socketId: '1.1', channel: 'demo');
-        $this->registry->subscribe(socketId: '1.2', channel: 'demo');
+        $this->registry->subscribe(
+            socketId: '1.1',
+            channel: 'demo',
+        );
+        $this->registry->subscribe(
+            socketId: '1.2',
+            channel: 'demo',
+        );
 
         self::assertSame(['1.1', '1.2'], $this->socketIdsOf('demo'));
     }
@@ -41,10 +47,19 @@ class ConnectionRegistryTest extends BaseTestCase
         $this->register('1.1');
         $this->register('1.2');
 
-        $this->registry->subscribe(socketId: '1.1', channel: 'demo');
-        $this->registry->subscribe(socketId: '1.2', channel: 'demo');
+        $this->registry->subscribe(
+            socketId: '1.1',
+            channel: 'demo',
+        );
+        $this->registry->subscribe(
+            socketId: '1.2',
+            channel: 'demo',
+        );
 
-        $subscribers = $this->registry->subscribers(channel: 'demo', exceptSocketId: '1.1');
+        $subscribers = $this->registry->subscribers(
+            channel: 'demo',
+            exceptSocketId: '1.1',
+        );
 
         self::assertSame(['1.2'], array_map(static fn($state) => $state->socketId, $subscribers));
     }
@@ -58,8 +73,14 @@ class ConnectionRegistryTest extends BaseTestCase
     {
         $this->register('1.1');
 
-        $this->registry->subscribe(socketId: '1.1', channel: 'demo');
-        $this->registry->subscribe(socketId: '1.1', channel: 'private-orders');
+        $this->registry->subscribe(
+            socketId: '1.1',
+            channel: 'demo',
+        );
+        $this->registry->subscribe(
+            socketId: '1.1',
+            channel: 'private-orders',
+        );
 
         $this->registry->forget('1.1');
 
@@ -74,8 +95,14 @@ class ConnectionRegistryTest extends BaseTestCase
     {
         $this->register('1.1');
 
-        $this->registry->subscribe(socketId: '1.1', channel: 'demo');
-        $this->registry->unsubscribe(socketId: '1.1', channel: 'demo');
+        $this->registry->subscribe(
+            socketId: '1.1',
+            channel: 'demo',
+        );
+        $this->registry->unsubscribe(
+            socketId: '1.1',
+            channel: 'demo',
+        );
 
         self::assertSame([], $this->registry->channelSocketIds('demo'));
         self::assertFalse($this->registry->get('1.1')?->hasChannel('demo'));
@@ -88,7 +115,11 @@ class ConnectionRegistryTest extends BaseTestCase
     {
         $this->register('1.1');
 
-        $this->registry->subscribe(socketId: '1.1', channel: 'presence-room', channelData: '{"user_id":"7"}');
+        $this->registry->subscribe(
+            socketId: '1.1',
+            channel: 'presence-room',
+            channelData: '{"user_id":"7"}',
+        );
 
         self::assertSame('{"user_id":"7"}', $this->registry->get('1.1')?->channelData('presence-room'));
     }
@@ -110,6 +141,31 @@ class ConnectionRegistryTest extends BaseTestCase
         $this->registry->forget('1.1');
 
         self::assertTrue($this->registry->isEmpty());
+    }
+
+    /** Nothing addressed to a socket the registry never had may create anything. */
+    #[Test]
+    public function anUnknownSocketIsIgnoredRatherThanInvented(): void
+    {
+        $this->registry->subscribe(
+            socketId: 'nobody',
+            channel: 'demo',
+        );
+        $this->registry->unsubscribe(
+            socketId: 'nobody',
+            channel: 'demo',
+        );
+        $this->registry->forget('nobody');
+
+        self::assertNull($this->registry->get('nobody'));
+        self::assertSame([], $this->registry->channelSocketIds('demo'));
+        self::assertTrue($this->registry->isEmpty());
+    }
+
+    #[Test]
+    public function anEmptyChannelHasNoSubscribers(): void
+    {
+        self::assertSame([], $this->registry->subscribers('never-used'));
     }
 
     private function register(string $socketId): void

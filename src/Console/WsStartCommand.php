@@ -148,12 +148,21 @@ class WsStartCommand extends Command
             return;
         }
 
-        $this->components->warn(
+        $this->reportWarning(
             sprintf(
                 'sconcur.ws.presence.store is "memory" with %d ws workers: each of them will answer'
                 . ' presence subscriptions with its own connections only. Use "cache" or "auto".',
                 $workerCount,
             ),
         );
+    }
+
+    /**
+     * Where a warning goes. Its own method so the decision above can be exercised without
+     * an output component, which only exists once artisan is running the command.
+     */
+    protected function reportWarning(string $message): void
+    {
+        $this->components->warn($message);
     }
 }

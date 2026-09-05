@@ -95,7 +95,10 @@ class BusSubscriberTest extends BaseTestCase
     {
         $connection = $this->connect('1.1', 'demo');
 
-        $this->registry->subscribe(socketId: '1.1', channel: 'private-orders');
+        $this->registry->subscribe(
+            socketId: '1.1',
+            channel: 'private-orders',
+        );
 
         $this->subscriber->fanOut(new BroadcastMessageDto(
             channels: ['demo', 'private-orders'],
@@ -129,7 +132,10 @@ class BusSubscriberTest extends BaseTestCase
 
         $this->registry->add(new ConnectionState(socketId: $socketId, connection: $connection));
 
-        $this->registry->subscribe(socketId: $socketId, channel: $channel);
+        $this->registry->subscribe(
+            socketId: $socketId,
+            channel: $channel,
+        );
 
         return $connection;
     }

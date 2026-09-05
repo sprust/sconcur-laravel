@@ -32,7 +32,10 @@ class BroadcasterTest extends BaseTestCase
 
         $this->bus = new LocalBroadcastBus();
 
-        $this->verifier = new SignatureVerifier(appKey: 'testkey', appSecret: 'testsecret');
+        $this->verifier = new SignatureVerifier(
+            appKey: 'testkey',
+            appSecret: 'testsecret',
+        );
 
         $this->broadcaster = new SConcurBroadcaster(
             bus: $this->bus,

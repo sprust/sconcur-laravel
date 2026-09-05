@@ -255,7 +255,10 @@ readonly class ConnectionHandler
         $member = $this->decodeMember($channelData);
 
         if ($member === null) {
-            $this->registry->unsubscribe(socketId: $state->socketId, channel: $channel->raw);
+            $this->registry->unsubscribe(
+                socketId: $state->socketId,
+                channel: $channel->raw,
+            );
 
             $this->subscriptionError(
                 state: $state,
@@ -267,17 +270,41 @@ readonly class ConnectionHandler
             return;
         }
 
-        $before = $this->presence->members($channel->raw);
+        try {
+            $before = $this->presence->members($channel->raw);
 
-        $this->presence->join(
-            channel: $channel->raw,
-            socketId: $state->socketId,
-            member: $member,
-        );
+            $this->presence->join(
+                channel: $channel->raw,
+                socketId: $state->socketId,
+                member: $member,
+            );
+
+            $members = $this->presence->members($channel->raw);
+        } catch (Throwable $exception) {
+            // The shared store is unreachable. Refusing this one subscription is the
+            // whole of the damage: the connection keeps its other channels, and a client
+            // that is told gets to retry, which is better than losing the socket over a
+            // roster.
+            $this->logger->log('conn', 'presence store failed on ' . $channel->raw . ': ' . $exception->getMessage());
+
+            $this->registry->unsubscribe(
+                socketId: $state->socketId,
+                channel: $channel->raw,
+            );
+
+            $this->subscriptionError(
+                state: $state,
+                channel: $channel->raw,
+                code: ErrorCodeEnum::OverCapacity,
+                message: 'Presence store is unavailable.',
+            );
+
+            return;
+        }
 
         $this->write($state, $this->codec->encode(
             event: ProtocolEventEnum::SubscriptionSucceeded,
-            data: $this->presencePayload->forSubscription($this->presence->members($channel->raw)),
+            data: $this->presencePayload->forSubscription($members),
             channel: $channel->raw,
         ));
 
@@ -311,13 +338,19 @@ readonly class ConnectionHandler
     {
         $member = $channel->isPresence() ? $this->decodeMember($state->channelData($channel->raw)) : null;
 
-        $this->registry->unsubscribe(socketId: $state->socketId, channel: $channel->raw);
+        $this->registry->unsubscribe(
+            socketId: $state->socketId,
+            channel: $channel->raw,
+        );
 
         if ($member === null) {
             return;
         }
 
-        $this->presence->leave(channel: $channel->raw, socketId: $state->socketId);
+        $this->presence->leave(
+            channel: $channel->raw,
+            socketId: $state->socketId,
+        );
 
         $userId = $this->presencePayload->userId($member);
 

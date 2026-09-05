@@ -52,7 +52,10 @@ class MessageCodecTest extends BaseTestCase
     public function itCarriesTheChannelOnlyWhenThereIsOne(): void
     {
         $withChannel = json_decode(
-            $this->codec->encode(event: ProtocolEventEnum::SubscriptionSucceeded, channel: 'demo'),
+            $this->codec->encode(
+                event: ProtocolEventEnum::SubscriptionSucceeded,
+                channel: 'demo',
+            ),
             true,
         );
 
@@ -96,12 +99,64 @@ class MessageCodecTest extends BaseTestCase
     public function itPassesAnAlreadyEncodedPayloadThrough(): void
     {
         $frame = json_decode(
-            $this->codec->encodeRaw(event: 'OrderShipped', data: '{"id":7}', channel: 'private-orders'),
+            $this->codec->encodeRaw(
+                event: 'OrderShipped',
+                data: '{"id":7}',
+                channel: 'private-orders',
+            ),
             true,
         );
 
         self::assertSame('OrderShipped', $frame['event']);
         self::assertSame('{"id":7}', $frame['data']);
         self::assertSame('private-orders', $frame['channel']);
+    }
+
+    /** `data` that decodes to something other than an object carries no fields. */
+    #[Test]
+    public function aScalarPayloadIsNoPayload(): void
+    {
+        self::assertSame([], $this->codec->decode('{"event":"e","data":"7"}')?->data);
+        self::assertSame([], $this->codec->decode('{"event":"e","data":"not json"}')?->data);
+        self::assertSame([], $this->codec->decode('{"event":"e","data":""}')?->data);
+        self::assertSame([], $this->codec->decode('{"event":"e","data":7}')?->data);
+    }
+
+    #[Test]
+    public function aFrameWithNoChannelAnywhereHasNone(): void
+    {
+        self::assertNull($this->codec->decode('{"event":"pusher:ping","data":{}}')?->channelName());
+    }
+
+    #[Test]
+    public function aNonStringChannelIsNoChannel(): void
+    {
+        self::assertNull($this->codec->decode('{"event":"e","channel":7,"data":{}}')?->channelName());
+    }
+
+    #[Test]
+    public function itReadsAStringFieldOnlyWhenItIsOne(): void
+    {
+        $message = $this->codec->decode('{"event":"e","data":{"auth":"k:s","count":7}}');
+
+        self::assertNotNull($message);
+        self::assertSame('k:s', $message->stringField('auth'));
+        self::assertNull($message->stringField('count'));
+        self::assertNull($message->stringField('absent'));
+    }
+
+    #[Test]
+    public function aTopLevelValueThatIsNotAnObjectIsNoFrame(): void
+    {
+        self::assertNull($this->codec->decode('"a string"'));
+        self::assertNull($this->codec->decode('7'));
+    }
+
+    #[Test]
+    public function anApplicationFrameNeedsNoChannel(): void
+    {
+        $frame = (array) json_decode($this->codec->encodeRaw(event: 'E', data: '{}'), true);
+
+        self::assertArrayNotHasKey('channel', $frame);
     }
 }

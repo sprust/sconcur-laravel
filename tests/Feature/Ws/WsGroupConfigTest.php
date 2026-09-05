@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Tests\Feature\Ws;
 
 use PHPUnit\Framework\Attributes\Test;
+use SConcur\Laravel\Console\WsStartCommand;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
+use SConcur\Laravel\Ws\WsGroupConfig;
 
 /**
  * The package's own config skeleton, evaluated the way an application's published copy
@@ -94,6 +96,35 @@ class WsGroupConfigTest extends BaseTestCase
         $_SERVER['SCONCUR_WS_PATH_PREFIX']  = '/ws';
 
         self::assertSame('/ws/abc123', $this->existingWsGroup()['server']['path']);
+    }
+
+    #[Test]
+    public function theServerBlockIsReadOffTheGroupThatRunsTheCommand(): void
+    {
+        config()->set('sconcur.master.groups', [
+            ['name' => 'http', 'workerArgs' => ['sconcur:servers:http:start'], 'server' => ['address' => 'wrong']],
+            ['name' => 'ws', 'workerArgs' => [WsStartCommand::NAME], 'server' => ['address' => 'right']],
+        ]);
+
+        self::assertSame(['address' => 'right'], WsGroupConfig::server(WsStartCommand::NAME));
+    }
+
+    /** No group at all is not a failure: a standalone run just gets the library defaults. */
+    #[Test]
+    public function anAbsentGroupYieldsNothingAndOneWorker(): void
+    {
+        config()->set('sconcur.master.groups', []);
+
+        self::assertSame([], WsGroupConfig::server(WsStartCommand::NAME));
+        self::assertSame(1, WsGroupConfig::workerCount(WsStartCommand::NAME));
+    }
+
+    #[Test]
+    public function aMalformedGroupListIsSteppedOver(): void
+    {
+        config()->set('sconcur.master.groups', ['not an array', ['name' => 'ws']]);
+
+        self::assertSame([], WsGroupConfig::server(WsStartCommand::NAME));
     }
 
     /**

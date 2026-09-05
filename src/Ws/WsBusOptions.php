@@ -32,12 +32,19 @@ readonly class WsBusOptions
      */
     public static function fromArray(array $config): self
     {
+        // The constructor owns the defaults and this reads them back off it. Spelling
+        // them out again here would be two places obliged to agree.
+        $defaults = new self();
+
         return new self(
-            driver: (string) ($config['driver'] ?? self::DRIVER_AMQP),
-            dsn: (string) ($config['dsn'] ?? ''),
-            exchange: (string) ($config['exchange'] ?? 'sconcur.ws'),
-            readTimeoutSeconds: max(0.1, (float) ($config['read_timeout_seconds'] ?? 5.0)),
-            reopenBackoffMs: max(0, (int) ($config['reopen_backoff_ms'] ?? 1000)),
+            driver: (string) ($config['driver'] ?? $defaults->driver),
+            dsn: (string) ($config['dsn'] ?? $defaults->dsn),
+            exchange: (string) ($config['exchange'] ?? $defaults->exchange),
+            readTimeoutSeconds: max(
+                0.1,
+                (float) ($config['read_timeout_seconds'] ?? $defaults->readTimeoutSeconds),
+            ),
+            reopenBackoffMs: max(0, (int) ($config['reopen_backoff_ms'] ?? $defaults->reopenBackoffMs)),
         );
     }
 }

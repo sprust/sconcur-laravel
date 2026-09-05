@@ -16,13 +16,19 @@ class SignatureVerifierTest extends BaseTestCase
     {
         parent::setUp();
 
-        $this->verifier = new SignatureVerifier(appKey: 'testkey', appSecret: 'testsecret');
+        $this->verifier = new SignatureVerifier(
+            appKey: 'testkey',
+            appSecret: 'testsecret',
+        );
     }
 
     #[Test]
     public function itSignsWithTheKeyInFront(): void
     {
-        $auth = $this->verifier->sign(socketId: '7.1', channelName: 'private-demo');
+        $auth = $this->verifier->sign(
+            socketId: '7.1',
+            channelName: 'private-demo',
+        );
 
         self::assertStringStartsWith('testkey:', $auth);
         self::assertSame(
@@ -37,7 +43,10 @@ class SignatureVerifierTest extends BaseTestCase
         self::assertTrue($this->verifier->verify(
             socketId: '7.1',
             channelName: 'private-demo',
-            auth: $this->verifier->sign(socketId: '7.1', channelName: 'private-demo'),
+            auth: $this->verifier->sign(
+                socketId: '7.1',
+                channelName: 'private-demo',
+            ),
         ));
     }
 
@@ -49,7 +58,10 @@ class SignatureVerifierTest extends BaseTestCase
     #[Test]
     public function aSignatureDoesNotTravelToAnotherSocketOrChannel(): void
     {
-        $auth = $this->verifier->sign(socketId: '7.1', channelName: 'private-demo');
+        $auth = $this->verifier->sign(
+            socketId: '7.1',
+            channelName: 'private-demo',
+        );
 
         self::assertFalse($this->verifier->verify(
             socketId: '7.2',
@@ -101,5 +113,21 @@ class SignatureVerifierTest extends BaseTestCase
         self::assertFalse($this->verifier->verify(socketId: '7.1', channelName: 'private-demo', auth: ''));
         self::assertFalse($this->verifier->verify(socketId: '7.1', channelName: 'private-demo', auth: 'testkey:'));
         self::assertFalse($this->verifier->verify(socketId: '7.1', channelName: 'private-demo', auth: 'nonsense'));
+    }
+
+    /** The key is public — the browser carries it — and the handler compares it. */
+    #[Test]
+    public function itHandsBackTheKeyItSignsWith(): void
+    {
+        self::assertSame('testkey', $this->verifier->appKey());
+    }
+
+    #[Test]
+    public function withoutBothHalvesItIsNotConfigured(): void
+    {
+        self::assertTrue($this->verifier->isConfigured());
+
+        self::assertFalse(new SignatureVerifier(appKey: '', appSecret: 's')->isConfigured());
+        self::assertFalse(new SignatureVerifier(appKey: 'k', appSecret: '')->isConfigured());
     }
 }

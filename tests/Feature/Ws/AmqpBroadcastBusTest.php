@@ -11,6 +11,7 @@ use SConcur\Laravel\Tests\Feature\BaseTestCase;
 use SConcur\Laravel\Ws\Bus\AmqpBroadcastBus;
 use SConcur\Laravel\Ws\Bus\BroadcastMessageDto;
 use SConcur\Laravel\Ws\WsBusOptions;
+use Throwable;
 
 /**
  * Integration test against the live broker the compose file raises.
@@ -119,6 +120,69 @@ class AmqpBroadcastBusTest extends BaseTestCase
         );
 
         self::assertSame(0, $delivered);
+    }
+
+    /**
+     * A broker that cannot be reached is retried, not spun on and not fatal.
+     *
+     * The path matters more than it looks: a connection the library has marked dead never
+     * comes back on its own, so the loop has to drop it and dial a new one. Keeping it
+     * used to leave the worker throwing the same exception for the rest of its life, with
+     * every one of its clients silently cut off from broadcasts.
+     */
+    #[Test]
+    public function anUnreachableBrokerIsRetriedAndThenGivenUpOn(): void
+    {
+        $bus = new AmqpBroadcastBus(
+            options: new WsBusOptions(
+                dsn: 'amqp://nobody:nobody@127.0.0.1:5699/%2f',
+                exchange: $this->exchange,
+                readTimeoutSeconds: 1.0,
+                reopenBackoffMs: 10,
+            ),
+        );
+
+        $turns = 0;
+
+        $bus->subscribe(
+            handler: static function (): void {
+                self::fail('nothing can be delivered by a broker that is not there');
+            },
+            shouldContinue: static function () use (&$turns): bool {
+                return ++$turns <= 3;
+            },
+        );
+
+        // It asked the condition again after each failure rather than throwing out.
+        self::assertSame(4, $turns);
+    }
+
+    /** A publish that fails drops the channel, so the next one dials again. */
+    #[Test]
+    public function aFailedPublishDoesNotPoisonThePublisher(): void
+    {
+        $bus = new AmqpBroadcastBus(
+            options: new WsBusOptions(
+                dsn: 'amqp://nobody:nobody@127.0.0.1:5699/%2f',
+                exchange: $this->exchange,
+            ),
+        );
+
+        $refused = 0;
+
+        foreach ([1, 2] as $attempt) {
+            try {
+                $bus->publish(new BroadcastMessageDto(channels: ['demo'], event: 'E', data: '{}'));
+
+                self::fail('attempt ' . $attempt . ' should not have reached a broker');
+            } catch (Throwable) {
+                ++$refused;
+            }
+        }
+
+        // The second attempt behaved like the first rather than failing on a handle the
+        // first one left behind.
+        self::assertSame(2, $refused);
     }
 
     private function bus(): AmqpBroadcastBus

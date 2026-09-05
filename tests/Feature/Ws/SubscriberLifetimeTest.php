@@ -7,6 +7,7 @@ namespace SConcur\Laravel\Tests\Feature\Ws;
 use PHPUnit\Framework\Attributes\Test;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
 use SConcur\Laravel\Tests\Feature\Ws\Support\FakeConnection;
+use SConcur\Laravel\Tests\Feature\Ws\Support\FailingBus;
 use SConcur\Laravel\Tests\Feature\Ws\Support\LoopingBus;
 use SConcur\Laravel\Ws\Bus\BusSubscriber;
 use SConcur\Laravel\Ws\ConnectionRegistry;
@@ -94,6 +95,45 @@ class SubscriberLifetimeTest extends BaseTestCase
         $this->subscriber->boot();
 
         self::assertSame(0, $this->bus->subscribeCalls);
+    }
+
+    /**
+     * A subscriber that dies says so and lets the next connection start another. Letting
+     * the failure escape would kill the coroutine with the flag still set, and this
+     * worker would never deliver a broadcast again.
+     */
+    #[Test]
+    public function aFailingSubscriberIsReportedAndTheFlagIsFreed(): void
+    {
+        $reported = [];
+
+        $subscriber = new BusSubscriber(
+            bus: new FailingBus(),
+            registry: $this->registry,
+            codec: new MessageCodec(),
+            logger: static function (string $line) use (&$reported): void {
+                $reported[] = $line;
+            },
+        );
+
+        $subscriber->ensureRunning();
+
+        self::assertFalse($subscriber->isRunning());
+        self::assertStringContainsString('subscriber stopped', $reported[0]);
+    }
+
+    #[Test]
+    public function withNoLoggerAFailureIsStillNotFatal(): void
+    {
+        $subscriber = new BusSubscriber(
+            bus: new FailingBus(),
+            registry: $this->registry,
+            codec: new MessageCodec(),
+        );
+
+        $subscriber->ensureRunning();
+
+        self::assertFalse($subscriber->isRunning());
     }
 
     private function connect(string $socketId): void

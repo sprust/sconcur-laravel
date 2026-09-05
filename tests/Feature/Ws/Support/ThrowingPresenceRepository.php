@@ -31,14 +31,21 @@ class ThrowingPresenceRepository implements PresenceRepositoryInterface
     {
         $this->guard();
 
-        $this->inner->join(channel: $channel, socketId: $socketId, member: $member);
+        $this->inner->join(
+            channel: $channel,
+            socketId: $socketId,
+            member: $member,
+        );
     }
 
     public function leave(string $channel, string $socketId): void
     {
         $this->guard();
 
-        $this->inner->leave(channel: $channel, socketId: $socketId);
+        $this->inner->leave(
+            channel: $channel,
+            socketId: $socketId,
+        );
     }
 
     public function members(string $channel): array

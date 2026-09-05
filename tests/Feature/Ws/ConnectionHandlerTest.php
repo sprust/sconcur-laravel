@@ -41,40 +41,7 @@ class ConnectionHandlerTest extends BaseTestCase
     {
         parent::setUp();
 
-        $options = WsOptions::fromArray((array) config('sconcur.ws'));
-
-        $this->registry = new ConnectionRegistry();
-
-        $this->bus = new LocalBroadcastBus();
-
-        $this->verifier = new SignatureVerifier(
-            appKey: $options->appKey,
-            appSecret: $options->appSecret,
-        );
-
-        $this->presence = new MemoryPresenceRepository();
-
-        $codec = new MessageCodec();
-
-        $this->handler = new ConnectionHandler(
-            options: $options,
-            registry: $this->registry,
-            verifier: $this->verifier,
-            codec: $codec,
-            bus: $this->bus,
-            subscriber: new BusSubscriber(
-                bus: $this->bus,
-                registry: $this->registry,
-                codec: $codec,
-            ),
-            presence: $this->presence,
-            presencePayload: new PresencePayload(),
-            // A fixed pid so the socket id under test is known, and so the signatures
-            // below can be computed for it.
-            socketIds: new SocketIdGenerator(processId: 1),
-            events: $this->getApp()->make(Dispatcher::class),
-            logger: new WsLogger('php://memory'),
-        );
+        $this->refreshHandler();
     }
 
     #[Test]
@@ -112,7 +79,10 @@ class ConnectionHandlerTest extends BaseTestCase
         $connection = $this->talk([
             $this->frame('pusher:subscribe', [
                 'channel' => 'private-orders.7',
-                'auth'    => $this->verifier->sign(socketId: '1.1', channelName: 'private-orders.7'),
+                'auth'    => $this->verifier->sign(
+                    socketId: '1.1',
+                    channelName: 'private-orders.7',
+                ),
             ]),
         ]);
 
@@ -189,7 +159,10 @@ class ConnectionHandlerTest extends BaseTestCase
     #[Test]
     public function aWrongAppKeyInThePathIsRefusedAndClosed(): void
     {
-        $connection = new FakeConnection(inbound: [], path: '/app/wrongkey');
+        $connection = new FakeConnection(
+            inbound: [],
+            path: '/app/wrongkey',
+        );
 
         ($this->handler)($connection);
 
@@ -314,9 +287,147 @@ class ConnectionHandlerTest extends BaseTestCase
         self::assertContains('pusher:pong', $connection->events());
     }
 
+    /** Off unless asked for, as they are with Pusher. */
+    #[Test]
+    public function aClientEventIsDroppedWhenTheyAreTurnedOff(): void
+    {
+        config()->set('sconcur.ws.client_events', false);
+
+        $this->refreshHandler();
+
+        $this->talk([
+            $this->frame('pusher:subscribe', ['channel' => 'private-chat', 'auth' => $this->chatAuth()]),
+            '{"event":"client-typing","channel":"private-chat","data":{}}',
+        ]);
+
+        self::assertSame([], $this->bus->published());
+    }
+
+    /** Without a cap one client is a broadcast facility of its own. */
+    #[Test]
+    public function clientEventsStopAtTheRateLimit(): void
+    {
+        config()->set('sconcur.ws.client_events_per_minute', 2);
+
+        $this->refreshHandler();
+
+        $frames = [$this->frame('pusher:subscribe', ['channel' => 'private-chat', 'auth' => $this->chatAuth()])];
+
+        for ($index = 0; $index < 5; $index++) {
+            $frames[] = '{"event":"client-typing","channel":"private-chat","data":{}}';
+        }
+
+        $this->talk($frames);
+
+        self::assertCount(2, $this->bus->published());
+    }
+
+    #[Test]
+    public function aClientEventOnAChannelItNeverJoinedGoesNowhere(): void
+    {
+        $this->talk(['{"event":"client-typing","channel":"private-chat","data":{}}']);
+
+        self::assertSame([], $this->bus->published());
+    }
+
+    #[Test]
+    public function subscribingTwiceAnswersOnce(): void
+    {
+        $connection = $this->talk([
+            $this->frame('pusher:subscribe', ['channel' => 'demo']),
+            $this->frame('pusher:subscribe', ['channel' => 'demo']),
+        ]);
+
+        $succeeded = array_filter(
+            $connection->events(),
+            static fn(string $event): bool => $event === 'pusher_internal:subscription_succeeded',
+        );
+
+        self::assertCount(1, $succeeded);
+    }
+
+    #[Test]
+    public function unsubscribingFromSomethingItNeverJoinedIsQuiet(): void
+    {
+        $connection = $this->talk([$this->frame('pusher:unsubscribe', ['channel' => 'demo'])]);
+
+        self::assertSame(['pusher:connection_established'], $connection->events());
+    }
+
+    #[Test]
+    public function aSubscribeWithNoChannelIsIgnored(): void
+    {
+        $connection = $this->talk([$this->frame('pusher:subscribe', [])]);
+
+        self::assertSame(['pusher:connection_established'], $connection->events());
+    }
+
+    /** A member the protocol cannot name is nobody arriving. */
+    #[Test]
+    public function presenceDataWithoutAUserIdAnnouncesNothing(): void
+    {
+        $channelData = '{"user_info":{"name":"Ann"}}';
+
+        $this->talk([
+            $this->frame('pusher:subscribe', [
+                'channel'      => 'presence-room.1',
+                'channel_data' => $channelData,
+                'auth'         => $this->verifier->sign(
+                    socketId: '1.1',
+                    channelName: 'presence-room.1',
+                    channelData: $channelData,
+                ),
+            ]),
+        ]);
+
+        self::assertSame([], $this->bus->published());
+    }
+
+    /** Rebuilds the handler on the config as it stands, for tests that change it. */
+    private function refreshHandler(): void
+    {
+        $options = WsOptions::fromArray((array) config('sconcur.ws'));
+
+        $this->registry = new ConnectionRegistry();
+
+        $this->bus = new LocalBroadcastBus();
+
+        $this->verifier = new SignatureVerifier(
+            appKey: $options->appKey,
+            appSecret: $options->appSecret,
+        );
+
+        $this->presence = new MemoryPresenceRepository();
+
+        $codec = new MessageCodec();
+
+        $this->handler = new ConnectionHandler(
+            options: $options,
+            registry: $this->registry,
+            verifier: $this->verifier,
+            codec: $codec,
+            bus: $this->bus,
+            subscriber: new BusSubscriber(
+                bus: $this->bus,
+                registry: $this->registry,
+                codec: $codec,
+            ),
+            presence: $this->presence,
+            presencePayload: new PresencePayload(),
+            // A fixed pid so the socket id under test is known, and so the signatures
+            // below can be computed for it.
+            socketIds: new SocketIdGenerator(processId: 1),
+            events: $this->getApp()->make(Dispatcher::class),
+            logger: new WsLogger('php://memory'),
+        );
+    }
+
     private function chatAuth(): string
     {
-        return $this->verifier->sign(socketId: '1.1', channelName: 'private-chat');
+        return $this->verifier->sign(
+            socketId: '1.1',
+            channelName: 'private-chat',
+        );
     }
 
     /**

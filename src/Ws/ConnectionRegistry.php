@@ -38,7 +38,10 @@ class ConnectionRegistry
         }
 
         foreach ($state->channels() as $channel) {
-            $this->unsubscribe(socketId: $socketId, channel: $channel);
+            $this->unsubscribe(
+                socketId: $socketId,
+                channel: $channel,
+            );
         }
 
         unset($this->connections[$socketId]);
@@ -57,7 +60,10 @@ class ConnectionRegistry
             return;
         }
 
-        $state->subscribe(channel: $channel, channelData: $channelData);
+        $state->subscribe(
+            channel: $channel,
+            channelData: $channelData,
+        );
 
         $this->channels[$channel][$socketId] = true;
     }

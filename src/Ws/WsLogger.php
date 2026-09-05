@@ -24,7 +24,10 @@ class WsLogger
 
     public function log(string $scope, string $message): void
     {
-        $handle = fopen($this->stream, 'a');
+        // Silenced, and the guard below is why: an application error handler turns the
+        // warning into an exception, which would escape a log line and take the caller
+        // with it — including a connection teardown, which must finish.
+        $handle = @fopen($this->stream, 'a');
 
         if ($handle === false) {
             return;

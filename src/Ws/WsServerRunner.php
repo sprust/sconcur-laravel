@@ -48,7 +48,7 @@ readonly class WsServerRunner
         $this->makeServer($logger)->serve($handler(...));
     }
 
-    private function makeServer(WsLogger $logger): WsServer
+    protected function makeServer(WsLogger $logger): WsServer
     {
         $argv = $this->serverArgs;
 
@@ -70,7 +70,7 @@ readonly class WsServerRunner
      * every client on a timer, which looks like a network fault, so it is said out loud
      * rather than left to be discovered.
      */
-    private function warnAboutHandlerTimeout(WsLogger $logger): void
+    protected function warnAboutHandlerTimeout(WsLogger $logger): void
     {
         foreach ($this->serverArgs as $argument) {
             if (!str_starts_with($argument, '--handlerTimeoutMs=')) {

@@ -32,10 +32,14 @@ readonly class WsPresenceOptions
      */
     public static function fromArray(array $config): self
     {
+        // The constructor owns the defaults; repeating them here would be two places
+        // obliged to agree.
+        $defaults = new self();
+
         return new self(
-            store: (string) ($config['store'] ?? self::STORE_AUTO),
-            ttlSeconds: max(60, (int) ($config['ttl_seconds'] ?? 3600)),
-            cachePrefix: (string) ($config['cache_prefix'] ?? 'sconcur:ws:presence'),
+            store: (string) ($config['store'] ?? $defaults->store),
+            ttlSeconds: max(60, (int) ($config['ttl_seconds'] ?? $defaults->ttlSeconds)),
+            cachePrefix: (string) ($config['cache_prefix'] ?? $defaults->cachePrefix),
         );
     }
 

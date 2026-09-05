@@ -19,7 +19,6 @@ use SConcur\Laravel\Ws\Protocol\MessageCodec;
 use SConcur\Laravel\Ws\SocketIdGenerator;
 use SConcur\Laravel\Ws\WsLogger;
 use SConcur\Laravel\Ws\WsOptions;
-use Throwable;
 
 /**
  * What the registry looks like once a client has gone.
@@ -111,21 +110,25 @@ class ConnectionTeardownTest extends BaseTestCase
         self::assertTrue($this->registry->isEmpty());
     }
 
-    /** A store that is already down refuses the subscription rather than half-taking it. */
+    /**
+     * A store that is already down costs the client that channel and nothing else: it is
+     * told, and the connection stays up for whatever else it is subscribed to.
+     */
     #[Test]
-    public function aPresenceSubscriptionAgainstADeadStoreLeavesNothingBehind(): void
+    public function aPresenceSubscriptionAgainstADeadStoreIsRefusedNotFatal(): void
     {
         $this->presence->down = true;
 
-        $connection = new FakeConnection([$this->presenceSubscription()]);
+        $connection = new FakeConnection([
+            $this->presenceSubscription(),
+            (string) json_encode(['event' => 'pusher:ping', 'data' => []]),
+        ]);
 
-        try {
-            ($this->handler)($connection);
-        } catch (Throwable) {
-            // The store's failure is the server's to report; what is asserted here is
-            // that the registry did not keep the connection because of it.
-        }
+        ($this->handler)($connection);
 
+        self::assertContains('pusher:subscription_error', $connection->events());
+        // Still talking afterwards: the refusal did not take the socket with it.
+        self::assertContains('pusher:pong', $connection->events());
         self::assertTrue($this->registry->isEmpty());
     }
 
