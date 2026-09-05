@@ -98,7 +98,7 @@ Five containers, prefix `scl-`:
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
 asset. **`composer.lock` must stay committed** — without it a fresh clone has nothing
-to pin against. The library version is pinned exactly (`0.12.1`, not a caret): the
+to pin against. The library version is pinned exactly (`0.12.2`, not a caret): the
 `.so` and the PHP side cross a protocol boundary that changes with the version.
 
 ## Architecture
@@ -141,9 +141,10 @@ Points worth knowing before changing anything:
   `artisan --address=… sconcur:servers:http:start --masterPid=N`, so the command name
   is not argv[1] and the check answered no in the very processes it existed for.
 - **A group's `server` block is forwarded to its workers' argv verbatim.** Symfony
-  Console rejects flags a command does not declare, so `HttpStartCommand` and
-  `RabbitmqConsumerStartCommand` declare every one of them even though
-  `HttpServer::fromArgs` / `QueueConsumer::fromArgs` are what read them.
+  Console rejects flags a command does not declare, so `HttpStartCommand`,
+  `RabbitmqConsumerStartCommand` and `WsStartCommand` declare every one of them even
+  though `HttpServer::fromArgs` / `QueueConsumer::fromArgs` / `WsServer::fromArgs` are
+  what read them.
 - **Nothing declares RabbitMQ topology.** Neither the publishing driver nor
   `QueueConsumer`. `sconcur:rabbitmq:declare` must run before the first publish and
   before the pool starts — it is on every install path (`make setup`), not a one-off.

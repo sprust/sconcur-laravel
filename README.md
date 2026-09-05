@@ -29,13 +29,13 @@ context** instead, swapping no global state and cloning no application.
 |---|---|---|
 | PHP | 8.4, NTS | |
 | `ext-msgpack` | 3.0.1 | every payload crossing the PHP↔extension boundary; a hard requirement of `sconcur/sconcur`, enforced by composer |
-| the `sconcur` extension | 0.12.1 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
+| the `sconcur` extension | 0.12.2 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
 | `ext-pcntl` | — | graceful shutdown of the master and of every long-lived worker |
 | MySQL | 8.4 | only for the `sconcur_mysql` connection |
 | RabbitMQ | 4.1 | only for the `sconcur_rabbitmq` queue |
 
 The `.so` and the PHP side cross a protocol boundary that changes with the version, so
-`sconcur/sconcur` is pinned exactly (`0.12.1`) rather than with a caret, and the
+`sconcur/sconcur` is pinned exactly (`0.12.2`) rather than with a caret, and the
 extension has to match it exactly: a version that drifted is rejected on load rather
 than working somehow.
 
@@ -656,10 +656,10 @@ One master supervises several unlike pools under one lock and one journal, so
 `workerScript`, `workerCount`, `workerArgs` and `server` live not at the top level of the
 config but in an element of the `groups` list.
 
-A group's `server` block is forwarded to its workers' argv verbatim, which is why both
-commands — `http:start` and `rabbitmq:start` — declare those flags: artisan rejects what
-is not declared. What reads them back is `HttpServer::fromArgs` and
-`QueueConsumer::fromArgs`. Anything that is not a scalar (the queue list) the master
+A group's `server` block is forwarded to its workers' argv verbatim, which is why all
+three commands — `http:start`, `rabbitmq:start` and `ws:start` — declare those flags:
+artisan rejects what is not declared. What reads them back is `HttpServer::fromArgs`,
+`QueueConsumer::fromArgs` and `WsServer::fromArgs`. Anything that is not a scalar (the queue list) the master
 JSON-encodes on the way.
 
 A run without a master has nobody to forward it, so in that case the command takes the
