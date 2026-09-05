@@ -16,7 +16,11 @@ class WsGroupConfigTest extends BaseTestCase
 {
     protected function tearDown(): void
     {
-        unset($_SERVER['SCONCUR_WS_WORKER_COUNT'], $_SERVER['SCONCUR_WS_APP_KEY']);
+        unset(
+            $_SERVER['SCONCUR_WS_WORKER_COUNT'],
+            $_SERVER['SCONCUR_WS_APP_KEY'],
+            $_SERVER['SCONCUR_WS_PATH_PREFIX'],
+        );
 
         parent::tearDown();
     }
@@ -74,6 +78,22 @@ class WsGroupConfigTest extends BaseTestCase
         $_SERVER['SCONCUR_WS_APP_KEY']      = 'abc123';
 
         self::assertSame('/app/abc123', $this->existingWsGroup()['server']['path']);
+    }
+
+    /**
+     * The path the extension matches and the prefix the handler checks have to be the
+     * same string. They were not: the group hard-coded /app while the handler read
+     * path_prefix, so setting the prefix alone made the extension answer 404 to every
+     * client and PHP never saw a thing.
+     */
+    #[Test]
+    public function thePathFollowsTheConfiguredPrefix(): void
+    {
+        $_SERVER['SCONCUR_WS_WORKER_COUNT'] = '1';
+        $_SERVER['SCONCUR_WS_APP_KEY']      = 'abc123';
+        $_SERVER['SCONCUR_WS_PATH_PREFIX']  = '/ws';
+
+        self::assertSame('/ws/abc123', $this->existingWsGroup()['server']['path']);
     }
 
     /**

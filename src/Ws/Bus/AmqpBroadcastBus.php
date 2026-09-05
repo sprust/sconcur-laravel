@@ -126,6 +126,22 @@ class AmqpBroadcastBus implements BroadcastBusInterface
     }
 
     /**
+     * Whether the consumer merely outwaited readTimeoutSeconds. The library says this one
+     * apart from a real ending in its message and nowhere else — there is no exception
+     * class for it — so this is a substring test, kept in one place rather than spread
+     * through the loop.
+     *
+     * Matched on the consumer's own wording rather than on the word "timeout": a command
+     * that outran the rpc deadline says "command timeout exceeded" and a wait says "wait
+     * timeout exceeded", and neither of those is idleness. Read as one, a real failure
+     * would go round the loop with no pause and with the dead handle still held.
+     */
+    protected function isIdleTimeout(AmqpException $exception): bool
+    {
+        return str_contains(strtolower($exception->getMessage()), 'consumer timeout');
+    }
+
+    /**
      * The caller's condition, asked between deliveries. Wrapped rather than called
      * inline: the loop above is entered on the same condition, and reading it through
      * one place keeps the delivery loop's exit next to the reason for it.
@@ -228,22 +244,6 @@ class AmqpBroadcastBus implements BroadcastBusInterface
             saslMethod: $options->saslMethod,
             connectionName: $options->connectionName,
         );
-    }
-
-    /**
-     * Whether the consumer merely outwaited readTimeoutSeconds. The library says this one
-     * apart from a real ending in its message and nowhere else — there is no exception
-     * class for it — so this is a substring test, kept in one place rather than spread
-     * through the loop.
-     *
-     * Matched on the consumer's own wording rather than on the word "timeout": a command
-     * that outran the rpc deadline says "command timeout exceeded" and a wait says "wait
-     * timeout exceeded", and neither of those is idleness. Read as one, a real failure
-     * would go round the loop with no pause and with the dead handle still held.
-     */
-    private function isIdleTimeout(AmqpException $exception): bool
-    {
-        return str_contains(strtolower($exception->getMessage()), 'consumer timeout');
     }
 
     /** Hands a connection back where there is nothing useful to do about a failure. */

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel\Tests\Feature\Ws\Support;
 
+use Closure;
 use SConcur\Exceptions\WsServer\WsServerConnectionClosedException;
 use SConcur\Features\WsServer\Dto\Connection;
 
@@ -22,6 +23,13 @@ class FakeConnection extends Connection
 
     /** Makes every write fail, the way a client that has already gone does. */
     public bool $failWrites = false;
+
+    /**
+     * Runs once when the scripted frames run out — that is, between the last thing the
+     * client said and the teardown. It is where a test breaks something that the
+     * teardown then has to survive.
+     */
+    public ?Closure $onDrained = null;
 
     /** @var list<string> */
     private array $inbound;
@@ -44,7 +52,19 @@ class FakeConnection extends Connection
 
     public function read(): ?string
     {
-        return array_shift($this->inbound);
+        $message = array_shift($this->inbound);
+
+        if ($message !== null || $this->onDrained === null) {
+            return $message;
+        }
+
+        $onDrained = $this->onDrained;
+
+        $this->onDrained = null;
+
+        $onDrained();
+
+        return null;
     }
 
     public function write(string $data, bool $binary = false): void
