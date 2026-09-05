@@ -420,9 +420,184 @@ socket.onmessage = (message) => {
    касается только воркера, который до этого простаивал.
 8. Дошло всем, кроме отправителя? Так и задумано, если вызывали `toOthers()`.
 
-Демо этого репозитория проходит весь путь одним скриптом — рукопожатие, ping, подписка,
-публикация, доставка — и отчитывается по каждому шагу кодом возврата, поэтому то же самое
-можно проверить без браузера: `make ws-check` и
+### Проверка пула командой
+
+Список выше — чек-лист, по которому идут руками. Приложению, у которого пул поднят больше
+чем в одном окружении, удобнее команда, которая проходит его сама: тот же путь —
+рукопожатие, ping, подписка, публикация, доставка — и код возврата в конце, чтобы ответ мог
+прочитать деплой или health-check.
+
+В библиотеке есть свой ws-клиент, `SConcur\Features\WsClient\WsClient`, и именно он
+позволяет обойтись без браузера и без JavaScript-рантайма. Два файла: событие, которое
+отправляем, и команда.
+
+```php
+namespace App\Events;
+
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Foundation\Events\Dispatchable;
+
+class PingCheck implements ShouldBroadcastNow
+{
+    use Dispatchable;
+
+    public function __construct(
+        private readonly string $channel,
+        public readonly int $number,
+    ) {
+    }
+
+    /** @return list<Channel> */
+    public function broadcastOn(): array
+    {
+        return [new Channel($this->channel)];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'ping.check';
+    }
+
+    /** @return array<string, mixed> */
+    public function broadcastWith(): array
+    {
+        return ['number' => $this->number];
+    }
+}
+```
+
+`ShouldBroadcastNow`, а не `ShouldBroadcast`: проверка не должна зависеть от того, поднят
+ли консьюмер очереди, — иначе она измеряет очередь, а не пул.
+
+```php
+namespace App\Console\Commands;
+
+use App\Events\PingCheck;
+use Illuminate\Console\Command;
+use SConcur\Features\WsClient\WsClient;
+use SConcur\Features\WsClient\WsClientOptions;
+use Throwable;
+
+class WsCheck extends Command
+{
+    protected $signature = 'ws:check {--host=127.0.0.1:8080} {--channel=diagnostics} {--count=5}';
+
+    protected $description = 'Проходит ws-пул от начала до конца и отвечает кодом возврата';
+
+    public function handle(): int
+    {
+        $key     = (string) config('sconcur.ws.app_key');
+        $prefix  = (string) config('sconcur.ws.path_prefix', '/app');
+        $host    = (string) $this->option('host');
+        $channel = (string) $this->option('channel');
+        $count   = max(1, (int) $this->option('count'));
+
+        // readTimeoutMs превращает молчащий пул в провалившуюся проверку, а не в
+        // зависшую команду: им ограничено каждое чтение ниже.
+        $client = new WsClient(new WsClientOptions(readTimeoutMs: 8_000));
+
+        try {
+            $connection = $client->connect("ws://$host$prefix/$key?protocol=7");
+        } catch (Throwable $exception) {
+            // Upgrade отвергается до того, как о нём узнает PHP, если пул не поднят или
+            // ключ в пути не тот — это 404 на рукопожатии.
+            $this->error('handshake: ' . $exception->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $established = json_decode((string) $connection->read(), true);
+
+        $socketId = (string) (json_decode((string) ($established['data'] ?? '{}'), true)['socket_id'] ?? '');
+
+        // socket id — это пид ws-воркера и счётчик, поэтому он же называет воркера, на
+        // которого попало это соединение.
+        $this->line("handshake: socket_id=$socketId, ws worker pid=" . strtok($socketId, '.'));
+
+        $connection->write((string) json_encode(['event' => 'pusher:ping', 'data' => []]));
+
+        $pong = (string) (json_decode((string) $connection->read(), true)['event'] ?? '');
+
+        $connection->write((string) json_encode([
+            'event' => 'pusher:subscribe',
+            'data'  => ['channel' => $channel],
+        ]));
+
+        $subscribed = (string) (json_decode((string) $connection->read(), true)['event'] ?? '');
+
+        // Публикуем из этого процесса, а он не тот ws-воркер, который держит сокет, —
+        // поэтому вернувшееся сообщение прошло через шину.
+        for ($number = 1; $number <= $count; $number++) {
+            PingCheck::dispatch($channel, $number);
+        }
+
+        $numbers = [];
+
+        for ($read = 0; $read < $count; $read++) {
+            $frame = json_decode((string) $connection->read(), true);
+
+            if (($frame['event'] ?? '') !== 'ping.check') {
+                continue;
+            }
+
+            $numbers[] = (int) (json_decode((string) $frame['data'], true)['number'] ?? 0);
+        }
+
+        $connection->close();
+
+        sort($numbers);
+
+        $this->line('ping: ' . $pong);
+        $this->line('subscribe: ' . $subscribed);
+        $this->line('delivery: ' . count($numbers) . " of $count");
+
+        return $pong === 'pusher:pong'
+            && $subscribed === 'pusher_internal:subscription_succeeded'
+            && $numbers === range(1, $count)
+                ? self::SUCCESS
+                : self::FAILURE;
+    }
+}
+```
+
+```
+$ php artisan ws:check --host=example.test --channel=diagnostics --count=50
+handshake: socket_id=27.22, ws worker pid=27
+ping: pusher:pong
+subscribe: pusher_internal:subscription_succeeded
+delivery: 50 of 50
+```
+
+```
+$ php artisan ws:check --host=example.test
+handshake: Failed to connect to ws://example.test/app/nope?protocol=7: net: wsClient:
+connect ws://example.test/app/nope?protocol=7: Invalid status code: 404
+```
+
+На что отвечает каждая строка:
+
+| Строка | Что доказывает |
+|---|---|
+| handshake | Upgrade проходит через прокси, пул отвечает `pusher:connection_established`, а пид говорит, какой воркер взял соединение |
+| ping | соединение живо в обе стороны, а не просто открыто |
+| subscribe | канал принят. На публичном канале это происходит без `/broadcasting/auth`; каналу `private-` нужна подпись, и это отдельная проверка |
+| delivery | вернулись все сообщения, пронумерованные с единицы, ничего не пропало и не пришло дважды — то есть шина донесла событие от публикующего процесса до воркера, который держит сокет |
+
+Три вещи, которые стоит знать, прежде чем ставить это в health-check:
+
+- **`--host` — это то, где слушает пул.** Через прокси это публичный хост, и тогда проверка
+  захватывает и его блок с Upgrade; на собственный порт пула — не захватывает, и проверка,
+  которая там проходит, пока браузеры отваливаются, как раз и указывает на прокси.
+- **Канал публичный**, поэтому проверка не трогает авторизацию приложения. Чтобы покрыть и
+  подпись, возьмите её у `/broadcasting/auth` и положите в `pusher:subscribe` — см.
+  [Каналы и подписи](#каналы-и-подписи).
+- **Пул больше одного воркера проверяется по воркеру за раз.** Соединение попадает на того,
+  кого выдало ядро, и доставку это доказывает в любом случае; чтобы увидеть всех, запустите
+  проверку столько раз, сколько воркеров, и соберите пиды.
+
+Демо этого репозитория проходит тот же путь отдельным скриптом, а не командой, потому что
+там публикация идёт по HTTP, чтобы была видна граница процессов: `make ws-check` и
 [demo/README.ru.md](../demo/README.ru.md#проверка-пула-без-браузера).
 
 ## Протокол

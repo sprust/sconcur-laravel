@@ -421,9 +421,184 @@ Top to bottom:
    milliseconds and concerns only a worker that was idle before.
 8. Everyone got it except the sender? That is what `toOthers()` is for.
 
-This repository's demo walks all of it from one script — handshake, ping, subscribe,
-publish, delivery — and reports each step with an exit code, so the same path can be
-checked without a browser: `make ws-check` and
+### Checking the pool from a command
+
+The list above is a checklist to walk by hand. An application that runs the pool in more
+than one environment is better off with a command that walks it: the same path — handshake,
+ping, subscribe, publish, delivery — with an exit code at the end, so a deploy or a health
+check can read the answer.
+
+The library ships a ws client of its own, `SConcur\Features\WsClient\WsClient`, and it is
+what makes this possible without a browser or a JavaScript runtime. Two files: an event to
+send, and the command.
+
+```php
+namespace App\Events;
+
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Foundation\Events\Dispatchable;
+
+class PingCheck implements ShouldBroadcastNow
+{
+    use Dispatchable;
+
+    public function __construct(
+        private readonly string $channel,
+        public readonly int $number,
+    ) {
+    }
+
+    /** @return list<Channel> */
+    public function broadcastOn(): array
+    {
+        return [new Channel($this->channel)];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'ping.check';
+    }
+
+    /** @return array<string, mixed> */
+    public function broadcastWith(): array
+    {
+        return ['number' => $this->number];
+    }
+}
+```
+
+`ShouldBroadcastNow` rather than `ShouldBroadcast`: the check should not depend on a queue
+consumer running, and a check that waits for one measures the queue instead of the pool.
+
+```php
+namespace App\Console\Commands;
+
+use App\Events\PingCheck;
+use Illuminate\Console\Command;
+use SConcur\Features\WsClient\WsClient;
+use SConcur\Features\WsClient\WsClientOptions;
+use Throwable;
+
+class WsCheck extends Command
+{
+    protected $signature = 'ws:check {--host=127.0.0.1:8080} {--channel=diagnostics} {--count=5}';
+
+    protected $description = 'Walks the WebSocket pool end to end and answers with an exit code';
+
+    public function handle(): int
+    {
+        $key     = (string) config('sconcur.ws.app_key');
+        $prefix  = (string) config('sconcur.ws.path_prefix', '/app');
+        $host    = (string) $this->option('host');
+        $channel = (string) $this->option('channel');
+        $count   = max(1, (int) $this->option('count'));
+
+        // readTimeoutMs is what turns a silent pool into a failed check rather than a
+        // command that hangs: every read below is bounded by it.
+        $client = new WsClient(new WsClientOptions(readTimeoutMs: 8_000));
+
+        try {
+            $connection = $client->connect("ws://$host$prefix/$key?protocol=7");
+        } catch (Throwable $exception) {
+            // The upgrade is refused before PHP sees anything when the pool is down or the
+            // key in the path is not the configured one — a 404 on the handshake.
+            $this->error('handshake: ' . $exception->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $established = json_decode((string) $connection->read(), true);
+
+        $socketId = (string) (json_decode((string) ($established['data'] ?? '{}'), true)['socket_id'] ?? '');
+
+        // The socket id is the ws worker's pid and a counter, so it also names the worker
+        // this connection landed on.
+        $this->line("handshake: socket_id=$socketId, ws worker pid=" . strtok($socketId, '.'));
+
+        $connection->write((string) json_encode(['event' => 'pusher:ping', 'data' => []]));
+
+        $pong = (string) (json_decode((string) $connection->read(), true)['event'] ?? '');
+
+        $connection->write((string) json_encode([
+            'event' => 'pusher:subscribe',
+            'data'  => ['channel' => $channel],
+        ]));
+
+        $subscribed = (string) (json_decode((string) $connection->read(), true)['event'] ?? '');
+
+        // Published from this process, which is not the ws worker holding the socket, so a
+        // message that comes back has crossed the bus.
+        for ($number = 1; $number <= $count; $number++) {
+            PingCheck::dispatch($channel, $number);
+        }
+
+        $numbers = [];
+
+        for ($read = 0; $read < $count; $read++) {
+            $frame = json_decode((string) $connection->read(), true);
+
+            if (($frame['event'] ?? '') !== 'ping.check') {
+                continue;
+            }
+
+            $numbers[] = (int) (json_decode((string) $frame['data'], true)['number'] ?? 0);
+        }
+
+        $connection->close();
+
+        sort($numbers);
+
+        $this->line('ping: ' . $pong);
+        $this->line('subscribe: ' . $subscribed);
+        $this->line('delivery: ' . count($numbers) . " of $count");
+
+        return $pong === 'pusher:pong'
+            && $subscribed === 'pusher_internal:subscription_succeeded'
+            && $numbers === range(1, $count)
+                ? self::SUCCESS
+                : self::FAILURE;
+    }
+}
+```
+
+```
+$ php artisan ws:check --host=example.test --channel=diagnostics --count=50
+handshake: socket_id=27.22, ws worker pid=27
+ping: pusher:pong
+subscribe: pusher_internal:subscription_succeeded
+delivery: 50 of 50
+```
+
+```
+$ php artisan ws:check --host=example.test
+handshake: Failed to connect to ws://example.test/app/nope?protocol=7: net: wsClient:
+connect ws://example.test/app/nope?protocol=7: Invalid status code: 404
+```
+
+What each line answers:
+
+| Line | What it proves |
+|---|---|
+| handshake | the upgrade passes through the proxy and the pool answers `pusher:connection_established`; the pid says which worker took the connection |
+| ping | the connection is alive in both directions, not merely open |
+| subscribe | the channel was accepted. On a public channel that happens without `/broadcasting/auth`; a `private-` one needs a signature, which is a separate check |
+| delivery | every message came back, numbered from one, with nothing missing and nothing twice — so the bus carries the event from a publishing process to the worker holding the socket |
+
+Three things worth knowing before this is wired into a health check:
+
+- **`--host` is where the pool listens.** Through the proxy it is the public host, and then
+  the check covers the proxy's upgrade block as well; against the pool's own port it does
+  not, and a check that passes there while browsers fail is exactly the proxy's doing.
+- **The channel is public**, so the check never touches the application's authorization. To
+  cover a signature too, ask `/broadcasting/auth` for one and put it into
+  `pusher:subscribe` — see [Channels and signatures](#channels-and-signatures).
+- **A pool larger than one worker is checked one worker at a time.** The connection lands
+  on whichever worker the kernel gives it, and the delivery proves the bus regardless; to
+  see every worker, run the check as many times as there are workers and collect the pids.
+
+This repository's demo carries the same walk as a standalone script rather than a command,
+because the demo publishes over HTTP to show the process boundary: `make ws-check` and
 [demo/README.md](../demo/README.md#checking-the-pool-without-a-browser).
 
 ## The protocol
