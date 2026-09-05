@@ -133,6 +133,56 @@ return [
                 ],
             ],
             /*
+            | The WebSocket pool. Its `server` block travels the way the others do:
+            | forwarded to the worker's argv verbatim, read back by WsServer::fromArgs,
+            | with WsStartCommand declaring those flags so artisan accepts them.
+            |
+            | Off unless asked for, like the consumer pool: a worker count below one leaves
+            | the group out of the master config entirely.
+            */
+            (int) env('SCONCUR_WS_WORKER_COUNT', 0) < 1 ? null : [
+                'name'         => 'ws',
+                'workerScript' => base_path('artisan'),
+                'workerCount'  => (int) env('SCONCUR_WS_WORKER_COUNT'),
+                'workerArgs'   => ['sconcur:servers:ws:start'],
+                'server'       => [
+                    'address'   => env('SCONCUR_WS_ADDRESS', '0.0.0.0:28090'),
+                    'reusePort' => (bool) env('SCONCUR_WS_REUSE_PORT', true),
+
+                    // The exact path clients upgrade on, key included: the comparison
+                    // ignores the query string, so Echo's /app/{key}?protocol=7 matches and
+                    // a wrong key is a 404 on the handshake, before PHP sees it. An empty
+                    // string would accept any path and leave the check to the handler.
+                    'path'      => env('SCONCUR_WS_PATH', '/app/' . env('SCONCUR_WS_APP_KEY', '')),
+
+                    'handshakeTimeoutMs' => (int) env('SCONCUR_WS_HANDSHAKE_TIMEOUT_MS', 10000),
+
+                    // Off: silence from a client is normal here — a page may only ever
+                    // listen. What keeps a dead peer from being held for ever is the ping
+                    // below, not an idle deadline.
+                    'idleTimeoutMs'      => (int) env('SCONCUR_WS_IDLE_TIMEOUT_MS', 0),
+
+                    'writeTimeoutMs'     => (int) env('SCONCUR_WS_WRITE_TIMEOUT_MS', 30000),
+                    'pingIntervalMs'     => (int) env('SCONCUR_WS_PING_INTERVAL_MS', 30000),
+                    'maxMessageBytes'    => (int) env('SCONCUR_WS_MAX_MESSAGE_BYTES', 1048576),
+                    'maxConcurrency'     => (int) env('SCONCUR_WS_MAX_CONCURRENCY', 0),
+
+                    // Not a per-frame deadline: it bounds the whole life of a connection,
+                    // and anything above zero disconnects every client on a timer. Left
+                    // hard-coded rather than env-driven, because there is no value of it
+                    // that a ws pool wants.
+                    'handlerTimeoutMs'   => 0,
+
+                    // How many connections to serve before standing down, not how many to
+                    // hold at once. A leak guard, off by default.
+                    'maxConnections'     => (int) env('SCONCUR_WS_MAX_CONNECTIONS', 0),
+
+                    'shutdownTimeoutMs'   => (int) env('SCONCUR_WS_SHUTDOWN_TIMEOUT_MS', 10000),
+                    'preemptionQuantumMs' => (int) env('SCONCUR_WS_PREEMPTION_QUANTUM_MS', 5),
+                ],
+            ],
+
+            /*
             | The periodic task pool. Exactly one worker, always: a second one would tick
             | the cron twice a minute, and workerCount 0 does not mean none — to the
             | master it means one worker per CPU.
@@ -191,6 +241,77 @@ return [
             'memory_mb' => (int) env('SCONCUR_RABBITMQ_MEMORY_MB', 128),
         ],
     ],
+    /*
+    |--------------------------------------------------------------------------
+    | WebSocket pool
+    |--------------------------------------------------------------------------
+    | The protocol side of the `ws` group above; the network side is that group's
+    | `server` block, which travels through argv instead.
+    |
+    | The wire protocol is a compatible subset of Pusher's, so `laravel-echo` talks to
+    | this pool with no client of its own and channel authorization goes through the
+    | application's ordinary /broadcasting/auth route. The key is public — the browser
+    | carries it — and the secret is what signs a subscription; only the http workers
+    | (to sign) and the ws workers (to verify) ever see it.
+    */
+    'ws' => [
+        'app_key'    => env('SCONCUR_WS_APP_KEY', ''),
+        'app_secret' => env('SCONCUR_WS_APP_SECRET', ''),
+
+        // Echo connects to /app/{key}; this is the part before the key.
+        'path_prefix' => env('SCONCUR_WS_PATH_PREFIX', '/app'),
+
+        // Told to the client in the handshake: how long it may stay silent before it
+        // should ping. The server's own keepalive is pingIntervalMs in the group above.
+        'activity_timeout_seconds' => (int) env('SCONCUR_WS_ACTIVITY_TIMEOUT_SECONDS', 120),
+
+        'max_channels_per_connection' => (int) env('SCONCUR_WS_MAX_CHANNELS_PER_CONNECTION', 100),
+
+        // client-* events: one subscriber talking to the others with no application in
+        // between. Off by default, as they are with Pusher.
+        'client_events'            => (bool) env('SCONCUR_WS_CLIENT_EVENTS', false),
+        'client_events_per_minute' => (int) env('SCONCUR_WS_CLIENT_EVENTS_PER_MINUTE', 60),
+
+        /*
+        | How a broadcast crosses the process boundary. It has to cross one: the event is
+        | raised in an http worker, a queue consumer or a task, and the connections live
+        | in the ws workers.
+        |
+        | `amqp` is a fanout exchange with one queue per ws worker. `local` goes no
+        | further than the process it was published in — a test double, not a lighter
+        | default: with it, nothing an http worker broadcasts ever reaches a browser.
+        */
+        'bus' => [
+            'driver'   => env('SCONCUR_WS_BUS_DRIVER', 'amqp'),
+            'dsn'      => env('SCONCUR_WS_BUS_DSN', env('SCONCUR_RABBITMQ_DSN')),
+            'exchange' => env('SCONCUR_WS_BUS_EXCHANGE', 'sconcur.ws'),
+
+            // Not a network knob: this is the subscriber's heartbeat. The consumer only
+            // hands control back on a delivery or on this timeout, and that is when a
+            // worker gets to notice its last connection is gone and stand down — which is
+            // what lets the server's graceful shutdown finish. It therefore also bounds
+            // that shutdown, and must stay well below the master's shutdownTimeoutMs.
+            'read_timeout_seconds' => (float) env('SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS', 5.0),
+
+            'reopen_backoff_ms' => (int) env('SCONCUR_WS_BUS_REOPEN_BACKOFF_MS', 1000),
+        ],
+
+        /*
+        | Where the member list of a presence channel lives. `auto` decides from the pool
+        | size, which is the only thing that determines the right answer: one worker holds
+        | every connection there is, several do not — and a list built from one worker's
+        | connections is wrong rather than partial.
+        |
+        | `memory` under a multi-worker pool is reported by the start command, not honoured
+        | in silence.
+        */
+        'presence' => [
+            'store'        => env('SCONCUR_WS_PRESENCE_STORE', 'auto'),
+            'ttl_seconds'  => (int) env('SCONCUR_WS_PRESENCE_TTL_SECONDS', 3600),
+            'cache_prefix' => env('SCONCUR_WS_PRESENCE_CACHE_PREFIX', 'sconcur:ws:presence'),
+        ],
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Periodic task pool

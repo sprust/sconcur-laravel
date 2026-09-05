@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel\Tests\Feature;
 
+use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Queue\QueueManager;
 use PHPUnit\Framework\Attributes\Test;
@@ -15,6 +16,12 @@ use SConcur\Laravel\Queue\Rabbitmq\Queue as SconcurQueue;
 use SConcur\Laravel\Routing\AsyncRouter;
 use SConcur\Laravel\Translation\AsyncTranslator;
 use SConcur\Laravel\View\AsyncViewFactory;
+use SConcur\Laravel\Ws\Broadcasting\SConcurBroadcaster;
+use SConcur\Laravel\Ws\Bus\BroadcastBusInterface;
+use SConcur\Laravel\Ws\Bus\LocalBroadcastBus;
+use SConcur\Laravel\Ws\ConnectionRegistry;
+use SConcur\Laravel\Ws\Presence\MemoryPresenceRepository;
+use SConcur\Laravel\Ws\Presence\PresenceRepositoryInterface;
 
 /**
  * What the provider wires, and the fact that it wires it in every process — there is no
@@ -81,5 +88,36 @@ class ServiceProviderTest extends BaseTestCase
         $queue = $this->getApp()->make(QueueManager::class)->connection('probe');
 
         self::assertInstanceOf(SconcurQueue::class, $queue);
+    }
+
+    #[Test]
+    public function itRegistersTheSconcurBroadcastDriver(): void
+    {
+        config()->set('broadcasting.connections.probe', ['driver' => 'sconcur']);
+
+        $broadcaster = $this->getApp()->make(BroadcastManager::class)->connection('probe');
+
+        self::assertInstanceOf(SConcurBroadcaster::class, $broadcaster);
+    }
+
+    /**
+     * The registry is the process's own state: a second copy would be a worker whose
+     * connections cannot find each other, and a bus subscriber delivering into nothing.
+     */
+    #[Test]
+    public function theConnectionRegistryIsOneObjectPerProcess(): void
+    {
+        $app = $this->getApp();
+
+        self::assertSame($app->make(ConnectionRegistry::class), $app->make(ConnectionRegistry::class));
+    }
+
+    #[Test]
+    public function itBuildsTheBusAndThePresenceStoreTheConfigNames(): void
+    {
+        $app = $this->getApp();
+
+        self::assertInstanceOf(LocalBroadcastBus::class, $app->make(BroadcastBusInterface::class));
+        self::assertInstanceOf(MemoryPresenceRepository::class, $app->make(PresenceRepositoryInterface::class));
     }
 }

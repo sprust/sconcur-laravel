@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel;
 
+use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
@@ -27,6 +28,7 @@ use SConcur\Laravel\Console\RabbitmqDeclareCommand;
 use SConcur\Laravel\Console\TasksRestartCommand;
 use SConcur\Laravel\Console\TasksStartCommand;
 use SConcur\Laravel\Console\TasksStopCommand;
+use SConcur\Laravel\Console\WsStartCommand;
 use SConcur\Laravel\Database\CoroutineTransactionsManager;
 use SConcur\Laravel\Database\Mysql\Connection as SconcurMysqlConnection;
 use SConcur\Laravel\Database\Mysql\Connector as SconcurMysqlConnector;
@@ -39,6 +41,24 @@ use SConcur\Laravel\Tasks\TaskPoolOptions;
 use SConcur\Laravel\Tasks\TaskRegistry;
 use SConcur\Laravel\Translation\AsyncTranslator;
 use SConcur\Laravel\View\AsyncViewFactory;
+use SConcur\Laravel\Ws\Auth\SignatureVerifier;
+use SConcur\Laravel\Ws\Broadcasting\SConcurBroadcaster;
+use SConcur\Laravel\Ws\Bus\AmqpBroadcastBus;
+use SConcur\Laravel\Ws\Bus\BroadcastBusInterface;
+use SConcur\Laravel\Ws\Bus\BusSubscriber;
+use SConcur\Laravel\Ws\Bus\LocalBroadcastBus;
+use SConcur\Laravel\Ws\ConnectionRegistry;
+use SConcur\Laravel\Ws\Presence\CachePresenceRepository;
+use SConcur\Laravel\Ws\Presence\MemoryPresenceRepository;
+use SConcur\Laravel\Ws\Presence\PresencePayload;
+use SConcur\Laravel\Ws\Presence\PresenceRepositoryInterface;
+use SConcur\Laravel\Ws\Protocol\MessageCodec;
+use SConcur\Laravel\Ws\SocketIdGenerator;
+use SConcur\Laravel\Ws\WsBusOptions;
+use SConcur\Laravel\Ws\WsLogger;
+use SConcur\Laravel\Ws\WsOptions;
+use SConcur\Laravel\Ws\WsPresenceOptions;
+use RuntimeException;
 
 /**
  * Laravel service provider for the SConcur integration.
@@ -82,6 +102,7 @@ class SConcurServiceProvider extends ServiceProvider
             HttpStartCommand::class,
             RabbitmqConsumerStartCommand::class,
             RabbitmqDeclareCommand::class,
+            WsStartCommand::class,
             TasksStartCommand::class,
             TasksStopCommand::class,
             TasksRestartCommand::class,
@@ -93,6 +114,8 @@ class SConcurServiceProvider extends ServiceProvider
         $this->registerDatabaseDriver();
         $this->registerCoroutineTransactionsManager();
         $this->registerTaskPool();
+        $this->registerWsPool();
+        $this->registerBroadcaster();
         $this->registerAsyncAdapters();
     }
 
@@ -159,6 +182,140 @@ class SConcurServiceProvider extends ServiceProvider
         );
 
         $this->app->singleton(TaskPoolLogger::class, static fn(): TaskPoolLogger => new TaskPoolLogger());
+    }
+
+    /**
+     * Bindings of the WebSocket pool.
+     *
+     * All of them are lazy: an application that never opens a ws connection and never
+     * broadcasts resolves none of this, and the process pays nothing for it. The registry
+     * and the subscriber are singletons on purpose — they are the process's own state, and
+     * a second copy per coroutine would be a worker whose connections cannot find each
+     * other.
+     */
+    private function registerWsPool(): void
+    {
+        $this->app->singleton(
+            WsOptions::class,
+            static fn(): WsOptions => WsOptions::fromArray((array) config('sconcur.ws', [])),
+        );
+
+        $this->app->singleton(WsLogger::class, static fn(): WsLogger => new WsLogger());
+
+        $this->app->singleton(MessageCodec::class, static fn(): MessageCodec => new MessageCodec());
+
+        $this->app->singleton(PresencePayload::class, static fn(): PresencePayload => new PresencePayload());
+
+        $this->app->singleton(ConnectionRegistry::class, static fn(): ConnectionRegistry => new ConnectionRegistry());
+
+        $this->app->singleton(SocketIdGenerator::class, static fn(): SocketIdGenerator => new SocketIdGenerator());
+
+        $this->app->singleton(SignatureVerifier::class, static function (Container $app): SignatureVerifier {
+            $options = $app->make(WsOptions::class);
+
+            if (!$options->isConfigured()) {
+                throw new RuntimeException(
+                    'config("sconcur.ws") has no app_key/app_secret. Publish the package config'
+                    . ' (vendor:publish --tag=sconcur-laravel) and set SCONCUR_WS_APP_KEY/SCONCUR_WS_APP_SECRET.',
+                );
+            }
+
+            return new SignatureVerifier(
+                appKey: $options->appKey,
+                appSecret: $options->appSecret,
+            );
+        });
+
+        $this->app->singleton(BroadcastBusInterface::class, static function (Container $app): BroadcastBusInterface {
+            $bus = $app->make(WsOptions::class)->bus;
+
+            if ($bus->driver === WsBusOptions::DRIVER_LOCAL) {
+                return new LocalBroadcastBus();
+            }
+
+            if ($bus->driver !== WsBusOptions::DRIVER_AMQP) {
+                throw new RuntimeException(
+                    sprintf('Unknown sconcur.ws.bus.driver "%s"; expected "amqp" or "local".', $bus->driver),
+                );
+            }
+
+            if ($bus->dsn === '') {
+                throw new RuntimeException(
+                    'sconcur.ws.bus.dsn is empty: the amqp bus has no broker to reach.'
+                    . ' Set SCONCUR_WS_BUS_DSN, or SCONCUR_RABBITMQ_DSN which it falls back to.',
+                );
+            }
+
+            $logger = $app->make(WsLogger::class);
+
+            return new AmqpBroadcastBus(
+                options: $bus,
+                logger: $logger->log(...),
+            );
+        });
+
+        $this->app->singleton(
+            PresenceRepositoryInterface::class,
+            fn(Container $app): PresenceRepositoryInterface => $this->makePresenceRepository($app),
+        );
+
+        $this->app->singleton(BusSubscriber::class, static fn(Container $app): BusSubscriber => new BusSubscriber(
+            bus: $app->make(BroadcastBusInterface::class),
+            registry: $app->make(ConnectionRegistry::class),
+            codec: $app->make(MessageCodec::class),
+            logger: $app->make(WsLogger::class)->log(...),
+        ));
+    }
+
+    /**
+     * Registers the `sconcur` broadcast driver.
+     *
+     * resolving() rather than resolving the manager here, for the same reason the queue
+     * connector does it: an application that broadcasts nothing should not pay for a
+     * BroadcastManager.
+     */
+    private function registerBroadcaster(): void
+    {
+        $this->app->resolving(BroadcastManager::class, static function (BroadcastManager $manager): void {
+            $manager->extend('sconcur', static fn(Container $app): SConcurBroadcaster => new SConcurBroadcaster(
+                bus: $app->make(BroadcastBusInterface::class),
+                verifier: $app->make(SignatureVerifier::class),
+            ));
+        });
+    }
+
+    /**
+     * Where the member list of a presence channel lives. `auto` decides from the pool
+     * size, which is the only thing that actually determines the right answer: one worker
+     * holds every connection there is, several do not.
+     */
+    private function makePresenceRepository(Container $app): PresenceRepositoryInterface
+    {
+        $options = $app->make(WsOptions::class)->presence;
+
+        if ($options->resolveStore($this->wsWorkerCount()) === WsPresenceOptions::STORE_MEMORY) {
+            return new MemoryPresenceRepository();
+        }
+
+        return new CachePresenceRepository(
+            cache: $app->make(CacheRepository::class),
+            prefix: $options->cachePrefix,
+            ttlSeconds: $options->ttlSeconds,
+        );
+    }
+
+    /** The ws group's worker count, found by what the group runs rather than by its name. */
+    private function wsWorkerCount(): int
+    {
+        foreach ((array) config('sconcur.master.groups', []) as $group) {
+            if (!is_array($group) || !in_array(WsStartCommand::NAME, (array) ($group['workerArgs'] ?? []), true)) {
+                continue;
+            }
+
+            return (int) ($group['workerCount'] ?? 1);
+        }
+
+        return 1;
     }
 
     /**

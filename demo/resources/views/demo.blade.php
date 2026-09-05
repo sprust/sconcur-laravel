@@ -233,6 +233,21 @@
         </div>
 
         <div class="panel">
+            <h2>WebSocket <span class="muted" id="ws-state">connecting…</span></h2>
+            <p class="muted" style="margin-top:0">
+                The page holds an upgraded connection to one ws worker; the button posts to an
+                http worker, which publishes to the fanout bus. The pids below are of two
+                different processes — that gap is what the bus crosses.
+            </p>
+            <div class="controls">
+                <div class="field"><label for="w-text">message</label><input id="w-text" type="text" value="hello" placeholder="message"></div>
+                <div class="field"><label for="w-others">to others</label><input id="w-others" type="checkbox" title="exclude this browser: broadcast()->toOthers()"></div>
+                <div class="actions"><button data-run="ws">Broadcast</button></div>
+            </div>
+            <pre id="out-ws">—</pre>
+        </div>
+
+        <div class="panel">
             <h2>Periodic tasks</h2>
             <p class="muted" style="margin-top:0">
                 A counter the task pool bumps on its own.
@@ -387,6 +402,110 @@
 
     poll();
     setInterval(poll, 1000);
+
+    // The ws client, written against the wire protocol rather than through laravel-echo:
+    // the demo has no bundler, and the frames are the same ones Echo sends. A real
+    // application uses Echo — the README shows the four lines of config it needs.
+    const ws = {
+        socket: null,
+        socketId: null,
+        log: [],
+    };
+
+    const wsLog = (line) => {
+        ws.log.unshift(new Date().toLocaleTimeString() + '  ' + line);
+
+        ws.log = ws.log.slice(0, 12);
+
+        $('out-ws').textContent = ws.log.join('\n');
+    };
+
+    const wsConnect = async () => {
+        const config = await fetchJson('/api/ws');
+
+        if (config.error || !config.key) {
+            $('ws-state').textContent = 'not configured';
+
+            wsLog('no app key: set SCONCUR_WS_APP_KEY and start the ws pool');
+
+            return;
+        }
+
+        const url = (location.protocol === 'https:' ? 'wss://' : 'ws://')
+            + location.host + config.pathPrefix + '/' + config.key + '?protocol=7&client=demo&version=1.0';
+
+        const socket = new WebSocket(url);
+
+        ws.socket = socket;
+
+        socket.onopen = () => { $('ws-state').textContent = 'connected'; };
+
+        socket.onclose = () => {
+            $('ws-state').textContent = 'disconnected, retrying…';
+
+            ws.socketId = null;
+
+            setTimeout(wsConnect, 2000);
+        };
+
+        socket.onmessage = (message) => {
+            const frame = JSON.parse(message.data);
+
+            // `data` travels as a string with JSON inside it, both ways. That is the
+            // protocol, not an encoding accident.
+            const data = typeof frame.data === 'string' ? JSON.parse(frame.data || '{}') : (frame.data || {});
+
+            if (frame.event === 'pusher:connection_established') {
+                ws.socketId = data.socket_id;
+
+                $('ws-state').textContent = 'connected as ' + data.socket_id;
+
+                socket.send(JSON.stringify({event: 'pusher:subscribe', data: {channel: config.channel}}));
+
+                return;
+            }
+
+            if (frame.event === 'pusher_internal:subscription_succeeded') {
+                wsLog('subscribed to ' + frame.channel);
+
+                return;
+            }
+
+            if (frame.event === 'pusher:ping') {
+                socket.send(JSON.stringify({event: 'pusher:pong', data: {}}));
+
+                return;
+            }
+
+            if (frame.event === 'demo.message') {
+                wsLog('from ' + data.source + ' pid=' + data.workerPid + ': ' + data.text);
+
+                return;
+            }
+
+            wsLog(frame.event + ' ' + JSON.stringify(data));
+        };
+    };
+
+    const wsBroadcast = async () => {
+        const answer = await fetchJson('/api/ws/broadcast', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-Socket-ID': ws.socketId || ''},
+            body: JSON.stringify({text: $('w-text').value, others: $('w-others').checked ? 1 : 0}),
+        });
+
+        if (answer.error) {
+            wsLog('publish failed: ' + answer.error);
+
+            return;
+        }
+
+        wsLog('published from http pid=' + answer.workerPid + (answer.toOthers ? ' (to others)' : ''));
+    };
+
+    document.querySelector('[data-run="ws"]').addEventListener('click', wsBroadcast);
+
+    wsConnect();
 </script>
 </body>
 </html>

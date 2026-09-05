@@ -9,7 +9,7 @@ working in this repository. `CLAUDE.md` and `AGENTS.md` both point here.
 
 SConcur Laravel is the Laravel integration for
 [SConcur](https://github.com/sprust/sconcur), a PHP concurrency library backed by a
-Rust extension. It gives an application three runtimes and a coroutine-scoped container:
+Rust extension. It gives an application four runtimes and a coroutine-scoped container:
 
 - **HTTP server** — each request runs in its own PHP Fiber inside one long-lived
   process (`src/Http/`).
@@ -17,8 +17,10 @@ Rust extension. It gives an application three runtimes and a coroutine-scoped co
   instead of one blocking `queue:work` per worker (`src/Queue/Rabbitmq/`).
 - **Periodic task pool** — every configured task is a coroutine of one `WaitGroup`
   (`src/Tasks/`).
+- **WebSocket pool** — every upgraded connection is a coroutine, speaking a
+  Pusher-compatible subset so `laravel-echo` needs no client of its own (`src/Ws/`).
 
-All three are pools of one supervisor process, the SConcur **master**
+All four are pools of one supervisor process, the SConcur **master**
 (`src/Servers/MasterRunner.php`), configured as `groups` in `config/sconcur.php`.
 
 The container is coroutine-scoped in every process, with nothing to turn on: config,
@@ -37,6 +39,8 @@ implementations are.
 - [docs/sconcur-coroutine-context.ru.md](../docs/sconcur-coroutine-context.ru.md) —
   the coroutine context this package builds on
 - [docs/task-pool.ru.md](../docs/task-pool.ru.md) — the periodic task pool
+- [docs/websocket.ru.md](../docs/websocket.ru.md) — the WebSocket pool: protocol,
+  channel signatures, the broadcast bus, presence
 - [demo/README.md](../demo/README.md) — the demo application
 - [.ai/plans/](plans/) — detailed designs for roadmap items
 
@@ -119,6 +123,12 @@ src/Database/Mysql/             — Connector, Connection, Dsn, TransactionStack
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
 src/Tasks/Control/              — stop/restart through a cache key, from any container
+src/Ws/                         — WsServerRunner, ConnectionHandler, ConnectionRegistry
+src/Ws/Protocol/                — the wire frames, channel names, error codes
+src/Ws/Auth/                    — SignatureVerifier (both halves of the channel signature)
+src/Ws/Bus/                     — the broadcast bus: AmqpBroadcastBus, BusSubscriber
+src/Ws/Presence/                — the member list of a presence channel
+src/Ws/Broadcasting/            — SConcurBroadcaster, the `sconcur` broadcast driver
 ```
 
 Points worth knowing before changing anything:
@@ -142,6 +152,16 @@ Points worth knowing before changing anything:
   worker per CPU. The `array_values(array_filter(...))` around the group list is load
   bearing — `array_filter` preserves keys, and `MasterConfig::parseGroups` refuses a
   non-list.
+- **The ws bus subscriber must not outlive the connections.** `Scheduler::serve` stops
+  accepting and then waits for every spawned coroutine before it exits, so a subscriber
+  looping for ever holds the drain open until the master's shutdown timeout kills the
+  process. It is therefore started by the first connection and stands down once the
+  registry is empty; on a silent bus that check comes round every
+  `SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS`, which is what bounds the graceful stop.
+- **The ws worker's own queue is `exclusive` but not `autoDelete`.** The subscriber leaves
+  the consumer generator on every idle wake to re-check the registry, and leaving it
+  cancels the consumer — with `autoDelete` the broker drops the queue in that gap and the
+  next consume takes the channel down with a 404.
 - **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
   the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;
   sqlx hardcodes that capability in its handshake, keeps `MySqlQueryResult` to two

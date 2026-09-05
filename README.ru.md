@@ -279,7 +279,7 @@ curl -i http://localhost/                   # ответ отдаёт уже в�
 ## Структура
 
 ```
-config/sconcur.php        — конфиг (panel_host, scoped_services, master + groups, queue, tasks)
+config/sconcur.php        — конфиг (panel_host, scoped_services, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider — провайдер (команды + проводка адаптеров в воркере)
 src/Console/              — артизан-команды
 src/Servers/              — MasterRunner (обёртка над SConcur\Worker\MasterCli)
@@ -289,6 +289,8 @@ src/Tasks/                — пул периодических задач (Task
                             CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/        — канал управления через кэш (stop/restart из другого контейнера)
 src/Http/                 — HttpServerRunner + LaravelHttpHandler (build + serve)
+src/Ws/                   — WebSocket-пул (WsServerRunner, ConnectionHandler,
+                            ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
 src/Foundation/           — AsyncApplication, ScopedService, ScopedServiceProxy
 src/Config/               — AsyncConfig (overlay config()->set per-coroutine)
 src/Events/               — AsyncDispatcher (defer() per-coroutine)
@@ -327,6 +329,7 @@ sconcur:servers:master:reload [--group=NAME]      # rolling restart: все пу
 sconcur:servers:http:start                        # один HTTP-сервер в foreground (build + serve)
 sconcur:servers:rabbitmq:start                    # пул консьюмеров очереди в foreground
 sconcur:rabbitmq:declare                          # объявить очереди, которые читает пул — обязательна
+sconcur:servers:ws:start                          # один WebSocket-сервер в foreground
 sconcur:tasks:start [--only=NAME]                 # пул периодических задач в foreground
 sconcur:tasks:stop [--task=NAME]                  # остановить пул или одну его задачу
 sconcur:tasks:restart [--task=NAME]               # пересобрать все задачи или одну
@@ -667,6 +670,66 @@ make test c=--filter=DsnTest          # один тест
 имени, — иначе переименование группы тихо оставило бы standalone-запуск на дефолтах
 библиотеки.
 
+### Группа `ws`
+
+| ENV | По умолчанию | Что делает |
+|---|---|---|
+| `SCONCUR_WS_WORKER_COUNT` | `0` | воркеров в группе; меньше 1 убирает группу из конфига |
+
+### WebSocket-сервер (блок `server` группы `ws`)
+
+| ENV | По умолчанию | Что делает |
+|---|---|---|
+| `SCONCUR_WS_ADDRESS` | `0.0.0.0:28090` | адрес прослушивания |
+| `SCONCUR_WS_REUSE_PORT` | `true` | `SO_REUSEPORT` (несколько процессов на одном порту) |
+| `SCONCUR_WS_PATH` | `/app/${SCONCUR_WS_APP_KEY}` | точный путь, на котором принимается Upgrade; пустая строка — любой |
+| `SCONCUR_WS_HANDSHAKE_TIMEOUT_MS` | `10000` | сколько может занять чтение заголовков Upgrade, мс |
+| `SCONCUR_WS_IDLE_TIMEOUT_MS` | `0` | простой между входящими сообщениями (0 — выключено) |
+| `SCONCUR_WS_WRITE_TIMEOUT_MS` | `30000` | отправка одного сообщения, мс |
+| `SCONCUR_WS_PING_INTERVAL_MS` | `30000` | частота keepalive-пинга сервера (0 — выключено) |
+| `SCONCUR_WS_MAX_MESSAGE_BYTES` | `1048576` | предел размера входящего сообщения |
+| `SCONCUR_WS_MAX_CONCURRENCY` | `0` | соединений в обслуживании одновременно (0 — ∞) |
+| `SCONCUR_WS_MAX_CONNECTIONS` | `0` | остановиться после N обслуженных соединений (0 — ∞) |
+| `SCONCUR_WS_SHUTDOWN_TIMEOUT_MS` | `10000` | дедлайн мягкой остановки, мс |
+| `SCONCUR_WS_PREEMPTION_QUANTUM_MS` | `5` | квант вытеснения во время обслуживания |
+
+`handlerTimeoutMs` в списке нет и жёстко равен `0`. Здесь это дедлайн на всю жизнь
+соединения, а не на один кадр, поэтому любое значение выше нуля рвёт всех клиентов по
+таймеру — ws-пулу не нужно ни одно из них.
+
+Путь сравнивается без query-строки, поэтому `/app/{key}?protocol=7&client=js` совпадает,
+а чужой ключ получает `404` на рукопожатии, ещё до PHP.
+
+### Протокол WebSocket (`sconcur.ws`)
+
+| ENV | По умолчанию | Что делает |
+|---|---|---|
+| `SCONCUR_WS_APP_KEY` | `` (пусто) | публичный ключ; браузер несёт его в пути |
+| `SCONCUR_WS_APP_SECRET` | `` (пусто) | подписывает подписки на каналы; только http- и ws-воркеры |
+| `SCONCUR_WS_PATH_PREFIX` | `/app` | часть пути подключения до ключа |
+| `SCONCUR_WS_ACTIVITY_TIMEOUT_SECONDS` | `120` | сколько клиент может молчать, прежде чем пинговать |
+| `SCONCUR_WS_MAX_CHANNELS_PER_CONNECTION` | `100` | каналов на одно соединение |
+| `SCONCUR_WS_CLIENT_EVENTS` | `false` | разрешить `client-*` на private/presence каналах |
+| `SCONCUR_WS_CLIENT_EVENTS_PER_MINUTE` | `60` | ограничение их частоты, на соединение |
+| `SCONCUR_WS_BUS_DRIVER` | `amqp` | `amqp` или `local` — последний ничего не доставляет между процессами и годится для тестов |
+| `SCONCUR_WS_BUS_DSN` | `${SCONCUR_RABBITMQ_DSN}` | брокер, на котором работает шина |
+| `SCONCUR_WS_BUS_EXCHANGE` | `sconcur.ws` | fanout-обмен, к которому привязывается каждый воркер |
+| `SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS` | `5.0` | пульс подписчика; он же ограничивает мягкую остановку |
+| `SCONCUR_WS_BUS_REOPEN_BACKOFF_MS` | `1000` | пауза перед переоткрытием упавшего подписчика |
+| `SCONCUR_WS_PRESENCE_STORE` | `auto` | `memory`, `cache` или `auto` — по размеру пула |
+| `SCONCUR_WS_PRESENCE_TTL_SECONDS` | `3600` | сколько живёт список участников канала без изменений |
+| `SCONCUR_WS_PRESENCE_CACHE_PREFIX` | `sconcur:ws:presence` | префикс ключей в кэше |
+
+`SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS` — не сетевая настройка. Подписчик шины получает
+управление обратно только на доставке или на этом таймауте, и именно тогда он замечает,
+что последнее соединение ушло, и останавливается — а это то, что позволяет мягкой
+остановке сервера завершиться. Поэтому значение обязано оставаться заметно меньше
+`shutdownTimeoutMs` группы.
+
+Список участников, лежащий в одном процессе, верен ровно пока процесс один. При пуле
+`memory` не неполон, а неверен — каждый воркер отвечает своими подписчиками; `auto` берёт
+там `cache`, а явный `memory` команда старта не принимает молча, а сообщает о нём.
+
 ## Очередь (`sconcur_rabbitmq`)
 
 Драйвер очереди Laravel поверх AMQP-фичи SConcur плюс пул консьюмеров, который читает
@@ -803,6 +866,79 @@ php artisan sconcur:servers:rabbitmq:start --queues='[{"name":"default","corouti
 `handlerTimeoutMs` разматывает зависший обработчик и отклоняет его сообщение; воркер
 берёт следующее. `WorkerOptions::$timeout` при этом ноль намеренно: `SIGALRM` воркера
 Laravel убил бы процесс вместе со всеми обработчиками, работающими рядом.
+
+## WebSocket (`sconcur:servers:ws:start`)
+
+Четвёртая среда выполнения пакета: пул WebSocket-воркеров под тем же мастером, сеть — в
+расширении, каждое поднятое соединение — своя корутина. Подробно —
+[docs/websocket.ru.md](docs/websocket.ru.md).
+
+Протокол — совместимое подмножество Pusher, поэтому `laravel-echo` работает без своего
+клиента, а авторизация канала идёт через штатный маршрут приложения `/broadcasting/auth`.
+Со стороны приложения это обычный драйвер вещания:
+
+```php
+broadcast(new OrderShipped($order))->toOthers();
+```
+
+### Как включить
+
+```php
+// config/broadcasting.php
+'connections' => [
+    'sconcur' => ['driver' => 'sconcur'],
+],
+```
+
+```dotenv
+BROADCAST_CONNECTION=sconcur
+
+SCONCUR_WS_WORKER_COUNT=2
+SCONCUR_WS_APP_KEY=some-public-key
+SCONCUR_WS_APP_SECRET=some-private-secret
+```
+
+Меньше одного воркера убирает группу из конфига мастера целиком; `0` означал бы один
+воркер на ядро, а не ни одного — то же правило, что у пула консьюмеров.
+
+Шине нужен брокер: `SCONCUR_WS_BUS_DSN`, который падает на `SCONCUR_RABBITMQ_DSN`.
+Команда `declare` не нужна — обмен и очереди воркеров принадлежат пакету, он их и
+объявляет.
+
+nginx должен пропускать Upgrade, и отдельным `location`: ws-соединение долгоживущее, а
+таймауты обычного прокси-блока рвали бы каждого клиента раз в минуту. Готовый блок — в
+`docker/nginx/templates/default.conf.template`.
+
+### Сторона браузера
+
+```js
+window.Echo = new Echo({
+    broadcaster: 'pusher',
+    key: import.meta.env.VITE_SCONCUR_WS_KEY,
+    wsHost: window.location.hostname,
+    wsPort: 80,
+    forceTLS: false,
+    disableStats: true,
+    enabledTransports: ['ws', 'wss'],
+    cluster: '',
+});
+```
+
+Для `toOthers()` событие обязано использовать
+`Illuminate\Broadcasting\InteractsWithSockets`: этот трейт объявляет свойство `$socket`,
+в которое пишется socket id вызывающего. Без него `toOthers()` молча ничего не делает.
+
+### Чего он не делает
+
+- Ни TLS, ни `permessage-deflate`: первое терминирует nginx, второго расширение пока не
+  умеет.
+- Ни HTTP-API Pusher, ни вебхуков, ни статистики — их место заняла шина.
+- Шифрованных каналов нет; подписка на такой отклоняется явно.
+- Истории событий нет: переподключившийся клиент не получает пропущенное, а воркер,
+  отсутствовавший секунду, пропускает события, а не получает их пачкой. Вещание — это
+  уведомление; то, что обязано дойти, — это очередь.
+- `sconcur:servers:master:reload` рвёт ws-соединения. Для http-пула reload незаметен,
+  здесь — заметен, и Echo переподключается сам.
 
 ## Пул задач (`sconcur:tasks:start`)
 

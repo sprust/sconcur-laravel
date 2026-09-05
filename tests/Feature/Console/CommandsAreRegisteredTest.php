@@ -28,6 +28,7 @@ class CommandsAreRegisteredTest extends BaseTestCase
             'sconcur:servers:http:start',
             'sconcur:servers:rabbitmq:start',
             'sconcur:rabbitmq:declare',
+            'sconcur:servers:ws:start',
             'sconcur:tasks:start',
             'sconcur:tasks:stop',
             'sconcur:tasks:restart',
@@ -61,6 +62,31 @@ class CommandsAreRegisteredTest extends BaseTestCase
             'idleTimeoutMs',
             'handlerTimeoutMs',
             'shutdownTimeoutMs',
+            'masterPid',
+        ] as $option) {
+            self::assertTrue($definition->hasOption($option), 'missing option: ' . $option);
+        }
+    }
+
+    #[Test]
+    public function theWsCommandDeclaresEveryServerFlagTheConfigMayCarry(): void
+    {
+        $definition = $this->getApp()->make(Kernel::class)->all()['sconcur:servers:ws:start']->getDefinition();
+
+        foreach ([
+            'address',
+            'reusePort',
+            'path',
+            'handshakeTimeoutMs',
+            'idleTimeoutMs',
+            'writeTimeoutMs',
+            'pingIntervalMs',
+            'maxMessageBytes',
+            'maxConcurrency',
+            'handlerTimeoutMs',
+            'maxConnections',
+            'shutdownTimeoutMs',
+            'preemptionQuantumMs',
             'masterPid',
         ] as $option) {
             self::assertTrue($definition->hasOption($option), 'missing option: ' . $option);

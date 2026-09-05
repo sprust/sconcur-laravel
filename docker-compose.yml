@@ -10,6 +10,7 @@ services:
     environment:
       # substituted into docker/nginx/templates/default.conf.template on startup
       SCONCUR_HTTP_PORT: ${SCONCUR_HTTP_PORT:-28080}
+      SCONCUR_WS_PORT: ${SCONCUR_WS_PORT:-28090}
     ports:
       - ${APP_PORT:-48081}:80
     volumes:

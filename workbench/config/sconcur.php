@@ -62,6 +62,19 @@ return [
                 ],
             ],
 
+            (int) env('SCONCUR_WS_WORKER_COUNT', 0) < 1 ? null : [
+                'name'         => 'ws',
+                'workerScript' => base_path('artisan'),
+                'workerCount'  => (int) env('SCONCUR_WS_WORKER_COUNT'),
+                'workerArgs'   => ['sconcur:servers:ws:start'],
+                'server'       => [
+                    'address'          => '127.0.0.1:28095',
+                    'reusePort'        => false,
+                    'path'             => '/app/' . env('SCONCUR_WS_APP_KEY', 'testkey'),
+                    'handlerTimeoutMs' => 0,
+                ],
+            ],
+
             [
                 'name'              => 'tasks',
                 'workerScript'      => base_path('artisan'),
@@ -84,6 +97,36 @@ return [
             'tries'     => 1,
             'backoff'   => 0,
             'memory_mb' => 128,
+        ],
+    ],
+
+    'ws' => [
+        'app_key'    => env('SCONCUR_WS_APP_KEY', 'testkey'),
+        'app_secret' => env('SCONCUR_WS_APP_SECRET', 'testsecret'),
+
+        'path_prefix' => '/app',
+
+        'activity_timeout_seconds'    => 120,
+        'max_channels_per_connection' => 3,
+
+        'client_events'            => true,
+        'client_events_per_minute' => 60,
+
+        // The local bus by default: a unit test has one process, and the amqp one is
+        // asked for explicitly by the tests that need a broker.
+        'bus' => [
+            'driver'   => env('SCONCUR_WS_BUS_DRIVER', 'local'),
+            'dsn'      => env('SCONCUR_WS_BUS_DSN', env('SCONCUR_RABBITMQ_DSN', '')),
+            'exchange' => env('SCONCUR_WS_BUS_EXCHANGE', 'sconcur.ws.tests'),
+
+            'read_timeout_seconds' => 1.0,
+            'reopen_backoff_ms'    => 100,
+        ],
+
+        'presence' => [
+            'store'        => 'memory',
+            'ttl_seconds'  => 3600,
+            'cache_prefix' => 'sconcur:ws:presence:tests',
         ],
     ],
 

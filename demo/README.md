@@ -27,22 +27,28 @@ flowchart TB
     http["group http — 2 workers"]
     rabbit["group rabbitmq — 1 worker, 4 consumers"]
     tasks["group tasks — 1 worker"]
+    ws["group ws — 2 workers"]
     mysql["MySQL"]
     broker["RabbitMQ"]
 
     browser -->|"HTTP"| nginx
+    browser <-->|"WebSocket upgrade and frames"| nginx
     nginx -->|"proxy_pass"| http
+    nginx -->|"proxy_pass with Upgrade"| ws
     master --> http
     master --> rabbit
     master --> tasks
+    master --> ws
     http -->|"Eloquent over sconcur_mysql"| mysql
     http -->|"dispatch"| broker
+    http -->|"broadcast into the fanout exchange"| broker
     rabbit -->|"consume"| broker
     rabbit -->|"job_results"| mysql
     tasks -->|"heartbeats"| mysql
+    ws -->|"one exclusive queue per worker"| broker
 ```
 
-All three groups are pools of one master, configured in `demo/config/sconcur.php`.
+All four groups are pools of one master, configured in `demo/config/sconcur.php`.
 The master's telemetry panel is what the page's top section reads.
 
 ## State after a restart
@@ -66,11 +72,31 @@ by hand: `make demo-reset`.
 | `GET /api/jobs` | what the consumer pool did with them, plus the `failed_jobs` count |
 | `GET /api/heartbeats` | the counter the periodic task pool bumps |
 | `GET /api/scaling` / `POST /api/scaling` | how many processes each pool runs and how many consumers the queue gets in each; a change rolls only the groups it affects |
+| `GET /api/ws` | what the page needs to open its socket: the app key and the path, never the secret |
+| `POST /api/ws/broadcast` | broadcasts `DemoBroadcast` on the `demo` channel; `others=1` adds `toOthers()` |
 | `GET /api/telemetry` | the master's panel, folded into what the page draws |
 
 The sequential leg of `/api/concurrent` is skipped when `n × ms` would exceed 3 s: it
 would really take that long, and a number nobody measured does not belong beside one
 somebody did.
+
+## The WebSocket panel
+
+The page holds an upgraded connection to one ws worker and the button posts to an http
+worker — two different processes, and the message arriving back on the socket is the whole
+demonstration: what carried it across is the fanout exchange. The pids in the log are of
+the two ends, so they do not match.
+
+The client is written against the wire protocol with the browser's own `WebSocket` rather
+than through `laravel-echo`: the demo has no bundler, and the frames are the same ones Echo
+sends. A real application uses Echo — the package README shows the config it needs.
+
+The **to others** box adds `->toOthers()`, so the browser that pressed the button is the
+one that does not see the message. With two tabs open the difference is visible; with one,
+nothing arrives, which is the point.
+
+Only the public `demo` channel is used here. Private and presence channels are authorized
+through `/broadcasting/auth` against an authenticated user, and the demo has no users.
 
 ## Changing the pool sizes
 

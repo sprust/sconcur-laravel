@@ -282,7 +282,7 @@ application".
 ## Layout
 
 ```
-config/sconcur.php        — the config (panel_host, scoped_services, master + groups, queue, tasks)
+config/sconcur.php        — the config (panel_host, scoped_services, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider — the provider (commands + wiring the adapters into the worker)
 src/Console/              — artisan commands
 src/Servers/              — MasterRunner (a wrapper over SConcur\Worker\MasterCli)
@@ -292,6 +292,8 @@ src/Tasks/                — the periodic task pool (TaskPool, TaskPoolControll
                             CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/        — the control channel through the cache (stop/restart from another container)
 src/Http/                 — HttpServerRunner + LaravelHttpHandler (build + serve)
+src/Ws/                   — the WebSocket pool (WsServerRunner, ConnectionHandler,
+                            ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
 src/Foundation/           — AsyncApplication, ScopedService, ScopedServiceProxy
 src/Config/               — AsyncConfig (a per-coroutine config()->set overlay)
 src/Events/               — AsyncDispatcher (per-coroutine defer())
@@ -331,6 +333,7 @@ sconcur:servers:master:reload [--group=NAME]      # rolling restart: every pool 
 sconcur:servers:http:start                        # one HTTP server in the foreground (build + serve)
 sconcur:servers:rabbitmq:start                    # the queue consumer pool in the foreground
 sconcur:rabbitmq:declare                          # declare the queues the pool reads — mandatory
+sconcur:servers:ws:start                          # one WebSocket server in the foreground
 sconcur:tasks:start [--only=NAME]                 # the periodic task pool in the foreground
 sconcur:tasks:stop [--task=NAME]                  # stop the pool or one of its tasks
 sconcur:tasks:restart [--task=NAME]               # rebuild every task or one
@@ -664,6 +667,65 @@ same `server` block out of its own group's config. The group is looked up by wha
 starts rather than by name — otherwise renaming a group would quietly leave a standalone
 run on the library's defaults.
 
+### The `ws` group
+
+| ENV | Default | What it does |
+|---|---|---|
+| `SCONCUR_WS_WORKER_COUNT` | `0` | workers in the group; below 1 leaves the group out of the config |
+
+### The WebSocket server (the `server` block of the `ws` group)
+
+| ENV | Default | What it does |
+|---|---|---|
+| `SCONCUR_WS_ADDRESS` | `0.0.0.0:28090` | listen address |
+| `SCONCUR_WS_REUSE_PORT` | `true` | `SO_REUSEPORT` (several processes on one port) |
+| `SCONCUR_WS_PATH` | `/app/${SCONCUR_WS_APP_KEY}` | the exact path the upgrade is accepted on; empty accepts any |
+| `SCONCUR_WS_HANDSHAKE_TIMEOUT_MS` | `10000` | how long the upgrade headers may take, ms |
+| `SCONCUR_WS_IDLE_TIMEOUT_MS` | `0` | idle timeout between inbound messages (0 = off) |
+| `SCONCUR_WS_WRITE_TIMEOUT_MS` | `30000` | one message write, ms |
+| `SCONCUR_WS_PING_INTERVAL_MS` | `30000` | server keepalive ping cadence (0 = off) |
+| `SCONCUR_WS_MAX_MESSAGE_BYTES` | `1048576` | inbound message size limit |
+| `SCONCUR_WS_MAX_CONCURRENCY` | `0` | connections served at once (0 = ∞) |
+| `SCONCUR_WS_MAX_CONNECTIONS` | `0` | stop after N served connections (0 = ∞) |
+| `SCONCUR_WS_SHUTDOWN_TIMEOUT_MS` | `10000` | graceful stop deadline, ms |
+| `SCONCUR_WS_PREEMPTION_QUANTUM_MS` | `5` | preemption quantum while serving |
+
+`handlerTimeoutMs` is not among them and is hard-coded to `0`. Here it is a deadline on the
+whole life of a connection rather than on one frame, so any value above zero disconnects
+every client on a timer — there is no setting of it a ws pool wants.
+
+The path is compared without the query string, so `/app/{key}?protocol=7&client=js`
+matches and a wrong key is a `404` on the handshake, before PHP sees it.
+
+### The WebSocket protocol (`sconcur.ws`)
+
+| ENV | Default | What it does |
+|---|---|---|
+| `SCONCUR_WS_APP_KEY` | `` (empty) | the public key; the browser carries it in the path |
+| `SCONCUR_WS_APP_SECRET` | `` (empty) | signs channel subscriptions; http and ws workers only |
+| `SCONCUR_WS_PATH_PREFIX` | `/app` | the part of the connection path before the key |
+| `SCONCUR_WS_ACTIVITY_TIMEOUT_SECONDS` | `120` | how long a client may stay silent before it should ping |
+| `SCONCUR_WS_MAX_CHANNELS_PER_CONNECTION` | `100` | channels one connection may hold |
+| `SCONCUR_WS_CLIENT_EVENTS` | `false` | allow `client-*` events on private/presence channels |
+| `SCONCUR_WS_CLIENT_EVENTS_PER_MINUTE` | `60` | rate limit for them, per connection |
+| `SCONCUR_WS_BUS_DRIVER` | `amqp` | `amqp`, or `local` — which delivers nothing between processes and is for tests |
+| `SCONCUR_WS_BUS_DSN` | `${SCONCUR_RABBITMQ_DSN}` | the broker the bus runs on |
+| `SCONCUR_WS_BUS_EXCHANGE` | `sconcur.ws` | the fanout exchange every worker binds to |
+| `SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS` | `5.0` | the subscriber's heartbeat; also bounds the graceful stop |
+| `SCONCUR_WS_BUS_REOPEN_BACKOFF_MS` | `1000` | pause before reopening a failed subscriber |
+| `SCONCUR_WS_PRESENCE_STORE` | `auto` | `memory`, `cache`, or `auto` — decided by the pool size |
+| `SCONCUR_WS_PRESENCE_TTL_SECONDS` | `3600` | how long a channel's member list survives with no change |
+| `SCONCUR_WS_PRESENCE_CACHE_PREFIX` | `sconcur:ws:presence` | key prefix of the cache store |
+
+`SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS` is not a network tuning knob. The bus subscriber only
+gets control back on a delivery or on this timeout, and that is when it notices its last
+connection is gone and stands down — which is what lets the server's graceful shutdown
+finish. It therefore has to stay well below the group's `shutdownTimeoutMs`.
+
+A member list kept in one process is correct only while there is one process. Under a pool
+`memory` is not incomplete but wrong, every worker answering with its own subscribers —
+`auto` picks `cache` there, and an explicit `memory` is reported by the start command.
+
 ## Queue (`sconcur_rabbitmq`)
 
 A Laravel queue driver over SConcur's AMQP feature, plus a consumer pool that reads queues
@@ -799,6 +861,79 @@ catches, it refuses it — and that is for the application, which knows its jobs
 `handlerTimeoutMs` unwinds a hung handler and refuses its message; the worker takes the
 next one. `WorkerOptions::$timeout` is deliberately zero next to it: the Laravel worker's
 `SIGALRM` would kill the process along with every handler running beside it.
+
+## WebSocket (`sconcur:servers:ws:start`)
+
+The package's fourth runtime: a pool of WebSocket workers under the same master, with the
+network in the extension and every upgraded connection a coroutine of its own. In detail:
+[docs/websocket.ru.md](docs/websocket.ru.md) (in Russian).
+
+The wire protocol is a compatible subset of Pusher's, so `laravel-echo` talks to it with no
+client of its own, and channel authorization goes through the application's ordinary
+`/broadcasting/auth` route. On the application side it is an ordinary broadcast driver:
+
+```php
+broadcast(new OrderShipped($order))->toOthers();
+```
+
+### Turning it on
+
+```php
+// config/broadcasting.php
+'connections' => [
+    'sconcur' => ['driver' => 'sconcur'],
+],
+```
+
+```dotenv
+BROADCAST_CONNECTION=sconcur
+
+SCONCUR_WS_WORKER_COUNT=2
+SCONCUR_WS_APP_KEY=some-public-key
+SCONCUR_WS_APP_SECRET=some-private-secret
+```
+
+Below one worker leaves the group out of the master config entirely; `0` would mean one
+worker per CPU, not none — the same rule as the consumer pool.
+
+The bus needs a broker: `SCONCUR_WS_BUS_DSN`, which falls back to `SCONCUR_RABBITMQ_DSN`.
+No `declare` command is needed — the exchange and the per-worker queues belong to the
+package and are declared by it.
+
+nginx has to pass the upgrade through, on its own location: a ws connection is long-lived,
+and the timeouts of an ordinary proxy block would cut every client loose once a minute. The
+repository's `docker/nginx/templates/default.conf.template` carries the block.
+
+### The browser side
+
+```js
+window.Echo = new Echo({
+    broadcaster: 'pusher',
+    key: import.meta.env.VITE_SCONCUR_WS_KEY,
+    wsHost: window.location.hostname,
+    wsPort: 80,
+    forceTLS: false,
+    disableStats: true,
+    enabledTransports: ['ws', 'wss'],
+    cluster: '',
+});
+```
+
+`toOthers()` needs the event to `use Illuminate\Broadcasting\InteractsWithSockets` — that
+trait is what declares the `$socket` property the caller's socket id is written into.
+Without it `toOthers()` is silently a no-op.
+
+### What it does not do
+
+- No TLS and no `permessage-deflate`: nginx terminates the first, and the extension does
+  not yet do the second.
+- No Pusher HTTP API, webhooks or stats — the bus took their place.
+- No encrypted channels; a subscription to one is refused by name.
+- No event history: a client that reconnects does not receive what it missed, and a worker
+  that was away for a second misses events rather than getting a burst of them. Broadcasts
+  are notifications; anything that must arrive belongs in a queue.
+- `sconcur:servers:master:reload` drops ws connections. For the http pool a reload is
+  invisible; here it is not, and Echo reconnects on its own.
 
 ## The task pool (`sconcur:tasks:start`)
 

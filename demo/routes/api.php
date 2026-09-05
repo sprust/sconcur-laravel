@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Demo\App\Http\Controllers\BroadcastController;
 use Demo\App\Http\Controllers\ConcurrencyController;
 use Demo\App\Http\Controllers\DemoController;
 use Demo\App\Http\Controllers\HeartbeatController;
@@ -28,3 +29,6 @@ Route::get('scaling', [ScalingController::class, 'index']);
 Route::post('scaling', [ScalingController::class, 'store']);
 
 Route::get('telemetry', [TelemetryController::class, 'index']);
+
+Route::get('ws', [BroadcastController::class, 'config']);
+Route::post('ws/broadcast', [BroadcastController::class, 'store']);
