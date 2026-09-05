@@ -20,7 +20,7 @@ use Throwable;
 
 /**
  * A Laravel connection whose statements run through the SConcur SQL feature
- * instead of PDO. Inside a coroutine the call goes to the Go extension while the
+ * instead of PDO. Inside a coroutine the call goes to the extension while the
  * coroutine suspends, so the neighbouring ones keep running; outside one the same
  * calls work synchronously.
  *
@@ -319,7 +319,7 @@ class Connection extends MySqlConnection
                 $stack->transaction()?->rollback();
             } finally {
                 // Whether or not the rollback reached the server, the transaction
-                // is over: the Go side unwinds it when the flow's context is
+                // is over: the extension unwinds it when the flow's context is
                 // cancelled. Leaving the stack behind would strand the coroutine
                 // on a dead transaction id.
                 $stack->clear();
@@ -364,7 +364,7 @@ class Connection extends MySqlConnection
     /**
      * {@inheritDoc}
      *
-     * The pool lives in the Go extension, which opens, recycles and closes its
+     * The pool lives in the extension, which opens, recycles and closes its
      * own connections; there is nothing here to reconnect.
      */
     public function reconnect()
@@ -511,12 +511,15 @@ class Connection extends MySqlConnection
      * {@inheritDoc}
      *
      * MySqlConnection matches PDO's wording ("Integrity constraint violation:
-     * 1062"). The Go driver reports the server's own: "Error 1062 (23000):
-     * Duplicate entry ...". firstOrCreate() and createOrFirst() depend on this.
+     * 1062"). The extension reports the server's own, with the driver's prefix in
+     * front of it: "error returned from database: 1062 (23000): Duplicate entry
+     * ...". The code and its SQLSTATE are the part both spellings share — sconcur
+     * 0.11.0 wrote "Error 1062 (23000)" — so that pair is what is matched.
+     * firstOrCreate() and createOrFirst() depend on this.
      */
     protected function isUniqueConstraintError(Exception $exception)
     {
-        return (bool) preg_match('#Error 1062 \(\d+\)#i', $exception->getMessage())
+        return (bool) preg_match('#(?:^|\W)1062 \(\d+\)#', $exception->getMessage())
             || parent::isUniqueConstraintError($exception);
     }
 

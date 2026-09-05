@@ -18,9 +18,10 @@ use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
 use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
 
 /**
- * The bridge between what the Go server hands over (PSR-7) and what Laravel answers
- * with. It is what every request in the HTTP pool goes through, and it needs no server
- * to exercise: the handler takes a PSR-7 request and gives a PSR-7 response.
+ * The bridge between what the extension's HTTP server hands over (PSR-7) and what
+ * Laravel answers with. It is what every request in the HTTP pool goes through, and it
+ * needs no server to exercise: the handler takes a PSR-7 request and gives a PSR-7
+ * response.
  */
 class LaravelHttpHandlerTest extends BaseConcurrencyTestCase
 {

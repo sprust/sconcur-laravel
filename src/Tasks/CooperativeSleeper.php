@@ -16,7 +16,7 @@ use SConcur\Features\Sleeper\Sleeper;
  * The wait is cut into chunks for two reasons. A pause has to end early when what it was
  * waiting for is over (a task deactivated mid-sleep should not hold the shutdown for its
  * full interval), and PHP has to reach an opcode boundary regularly for a pending signal
- * handler to run at all — a process whose coroutines are all parked in Go executes no PHP
+ * handler to run at all — a process whose coroutines are all parked in the extension executes no PHP
  * and would not see SIGTERM. The servers of the library poll on the same 250 ms for the
  * same reason.
  */

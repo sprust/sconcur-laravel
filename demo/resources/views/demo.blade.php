@@ -346,25 +346,25 @@
             ['avg ms', data.totals.work ? data.totals.work.avgMs.toFixed(1) : '—'],
             ['cpu %', data.totals.cpuPercent.toFixed(1)],
             ['rss', bytes(data.totals.memoryRssBytes)],
-            ['goroutines', data.totals.goroutines],
+            ['ext tasks', data.totals.runtimeTasks],
             ['master rss', bytes(data.master.memoryRssBytes)],
         ].map(([key, value]) => `<div class="tile"><div class="k">${key}</div><div class="v">${value}</div></div>`).join('');
 
         $('groups-table').innerHTML =
-            row(['group', 'workers', 'hung', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'goroutines'], 'th')
+            row(['group', 'workers', 'hung', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'ext tasks'], 'th')
             + data.groups.map((group) => row([
                 group.name, group.workersTotal, group.workersHung,
                 ...workCells(group.work),
-                group.cpuPercent.toFixed(1), bytes(group.memoryRssBytes), group.goroutines,
+                group.cpuPercent.toFixed(1), bytes(group.memoryRssBytes), group.runtimeTasks,
             ])).join('');
 
         $('workers-table').innerHTML =
-            row(['pid', 'group', 'uptime s', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'goroutines'], 'th')
+            row(['pid', 'group', 'uptime s', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'ext tasks'], 'th')
             + data.workers.map((worker) => row([
                 worker.hung ? `<span class="bad">${worker.pid}</span>` : worker.pid,
                 worker.group, worker.uptimeSeconds.toFixed(0),
                 ...workCells(worker.work),
-                worker.cpuPercent.toFixed(1), bytes(worker.memoryRssBytes), worker.goroutines,
+                worker.cpuPercent.toFixed(1), bytes(worker.memoryRssBytes), worker.runtimeTasks,
             ])).join('');
     };
 

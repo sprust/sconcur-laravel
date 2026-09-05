@@ -136,7 +136,7 @@ class TransactionStack
 
     /**
      * A transaction is closed by the coroutine that opened it. Anything else
-     * would commit or roll back on the Go side while the opener's own context
+     * would commit or roll back on the extension side while the opener's own context
      * entry stayed behind, pointing at a transaction that no longer exists —
      * after which its statements fail on a dead id and its own commit is a
      * silent no-op, because Transaction::finish() is idempotent.

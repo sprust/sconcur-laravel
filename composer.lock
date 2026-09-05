@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "220a512881e56994c3d675c294b996cb",
+    "content-hash": "cb1985cad06719ecdfae32f4e24bd8d5",
     "packages": [
         {
             "name": "brick/math",
@@ -3187,16 +3187,16 @@
         },
         {
             "name": "sconcur/sconcur",
-            "version": "0.11.0",
+            "version": "0.12.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/sprust/sconcur.git",
-                "reference": "8af32c3367e497bc611ed2f0522f4b0030f96c3b"
+                "reference": "0d77782cfcd3e4dc6aeccf4c5f20344c1142b19d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sprust/sconcur/zipball/8af32c3367e497bc611ed2f0522f4b0030f96c3b",
-                "reference": "8af32c3367e497bc611ed2f0522f4b0030f96c3b",
+                "url": "https://api.github.com/repos/sprust/sconcur/zipball/0d77782cfcd3e4dc6aeccf4c5f20344c1142b19d",
+                "reference": "0d77782cfcd3e4dc6aeccf4c5f20344c1142b19d",
                 "shasum": ""
             },
             "require": {
@@ -3243,12 +3243,12 @@
                     "email": "sprust28@gmail.com"
                 }
             ],
-            "description": "PHP concurrency library backed by an extension written in Go",
+            "description": "PHP concurrency library backed by an extension written in Rust",
             "support": {
                 "issues": "https://github.com/sprust/sconcur/issues",
-                "source": "https://github.com/sprust/sconcur/tree/v0.11.0"
+                "source": "https://github.com/sprust/sconcur/tree/v0.12.1"
             },
-            "time": "2026-08-28T17:49:33+00:00"
+            "time": "2026-09-05T11:20:22+00:00"
         },
         {
             "name": "symfony/clock",

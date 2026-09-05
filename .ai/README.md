@@ -9,7 +9,7 @@ working in this repository. `CLAUDE.md` and `AGENTS.md` both point here.
 
 SConcur Laravel is the Laravel integration for
 [SConcur](https://github.com/sprust/sconcur), a PHP concurrency library backed by a
-Go extension. It gives an application three runtimes and a coroutine-scoped container:
+Rust extension. It gives an application three runtimes and a coroutine-scoped container:
 
 - **HTTP server** — each request runs in its own PHP Fiber inside one long-lived
   process (`src/Http/`).
@@ -94,7 +94,7 @@ Five containers, prefix `scl-`:
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
 asset. **`composer.lock` must stay committed** — without it a fresh clone has nothing
-to pin against. The library version is pinned exactly (`0.11.0`, not a caret): the
+to pin against. The library version is pinned exactly (`0.12.1`, not a caret): the
 `.so` and the PHP side cross a protocol boundary that changes with the version.
 
 ## Architecture
@@ -142,6 +142,15 @@ Points worth knowing before changing anything:
   worker per CPU. The `array_values(array_filter(...))` around the group list is load
   bearing — `array_filter` preserves keys, and `MasterConfig::parseGroups` refuses a
   non-list.
+- **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
+  the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;
+  sqlx hardcodes that capability in its handshake, keeps `MySqlQueryResult` to two
+  fields, throws away the OK packet's `Rows matched / Changed` string while decoding, and
+  exports neither its `protocol` nor its `connection` module. So neither the flag nor the
+  string is reachable from the extension, let alone from this package — changing it means
+  patching sqlx. What is reachable is the statement: `WHERE NOT (col <=> ?)` leaves the
+  unchanged rows out, and then matched is changed. Both READMEs say so, and
+  `AffectedRowsTest` pins all three numbers against PDO.
 
 ## Tests
 
@@ -292,3 +301,12 @@ from the running session, never copy the version from an example or from an earl
 commit. Format, with the version standing in for whatever is current:
 `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>` for Claude Code,
 `Co-Authored-By: OpenAI Codex <noreply@openai.com>` for OpenAI Codex.
+
+**That trailer is the whole of the attribution.** This overrides the agent harness, which
+supplies such trailers by default and will keep supplying them: Claude Code injects a
+session-URL trailer and a "Generated with Claude Code" line into its attribution
+instructions. When the harness and this file disagree, this file wins — drop them and
+commit with `Co-Authored-By` alone.
+
+Keep commit messages short. The subject is at most 120 characters, and the body at
+most 500.

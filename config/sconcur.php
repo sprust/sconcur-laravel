@@ -140,9 +140,9 @@ return [
             | No `server` block: the pool reads nothing from argv but the master's pid,
             | which the master appends by itself.
             |
-            | Unlike the pools above, it reports to the panel from PHP rather than from a
-            | runtime's Go side, because it runs no such runtime — see TaskPoolTelemetry
-            | and the `tasks` section further down.
+            | Unlike the pools above, it reports to the panel from PHP rather than from the
+            | extension's own runtime, because it runs no such runtime — see
+            | TaskPoolTelemetry and the `tasks` section further down.
             */
             [
                 'name'         => 'tasks',
@@ -217,7 +217,7 @@ return [
 
         // How finely a pause is cut, which is how fast the pool notices a signal: a
         // pcntl handler only runs while PHP does, and a process whose coroutines are all
-        // parked in Go executes none. The library's own servers poll on the same 250 ms.
+        // parked in the extension executes none. The library's own servers poll on the same 250 ms.
         'sleep_chunk_ms' => (int) env('SCONCUR_TASKS_SLEEP_CHUNK_MS', 250),
 
         // Automatic coroutine switching, so a tick busy with pure computation cannot

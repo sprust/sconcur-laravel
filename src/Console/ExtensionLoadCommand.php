@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Console;
 
 /**
- * Download the sconcur Go extension (.so) matching the package version by
+ * Download the sconcur extension (.so) matching the package version by
  * running the library downloader (vendor/bin/sconcur-load) and streaming its
  * output. The target defaults to servers/sconcur.
  */

@@ -14,7 +14,7 @@ use RuntimeException;
  * This is what the connection exists for. On PDO the handle is one per process, so two
  * coroutines writing at once are inside each other's transaction and one rollback takes
  * the other's work with it. Here the nesting level lives in the coroutine context and
- * the Go side pins the transaction to a physical connection of its own.
+ * the extension pins the transaction to a physical connection of its own.
  */
 class CoroutineTransactionTest extends BaseDatabaseTestCase
 {

@@ -28,14 +28,14 @@ context** instead, swapping no global state and cloning no application.
 | Component | Version | What for |
 |---|---|---|
 | PHP | 8.4, NTS | |
-| `ext-msgpack` | 3.0.1 | every payload crossing the PHP↔Go boundary; a hard requirement of `sconcur/sconcur`, enforced by composer |
-| the `sconcur` extension | 0.11.0 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
+| `ext-msgpack` | 3.0.1 | every payload crossing the PHP↔extension boundary; a hard requirement of `sconcur/sconcur`, enforced by composer |
+| the `sconcur` extension | 0.12.1 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
 | `ext-pcntl` | — | graceful shutdown of the master and of every long-lived worker |
 | MySQL | 8.4 | only for the `sconcur_mysql` connection |
 | RabbitMQ | 4.1 | only for the `sconcur_rabbitmq` queue |
 
 The `.so` and the PHP side cross a protocol boundary that changes with the version, so
-`sconcur/sconcur` is pinned exactly (`0.11.0`) rather than with a caret, and the
+`sconcur/sconcur` is pinned exactly (`0.12.1`) rather than with a caret, and the
 extension has to match it exactly: a version that drifted is rejected on load rather
 than working somehow.
 
@@ -350,7 +350,7 @@ counter does not fix that, which is why no separate DB methods were added.
 
 The problem is not `await` as such but any coroutine switch. These cause one:
 
-- any call going into the Go extension — Mongo, the SQL feature, the HTTP client, AMQP,
+- any call going into the extension — Mongo, the SQL feature, the HTTP client, AMQP,
   `Sleeper`;
 - `WaitGroup` — both when starting child coroutines and when waiting for them;
 - preemptive switching by quantum (`preemption_quantum_ms` of the task pool): it switches
@@ -365,7 +365,7 @@ nothing but SQL against that same PDO, and only with preemption off (verified: 3
 ## Database (`sconcur_mysql`)
 
 A Laravel connection with SConcur's SQL feature behind it instead of PDO. A statement goes
-into the Go extension while the calling coroutine is suspended, so concurrent handlers in
+into the extension while the calling coroutine is suspended, so concurrent handlers in
 one process do not wait for each other on a shared blocking handle. Outside a coroutine
 the same calls work synchronously.
 
@@ -394,15 +394,20 @@ usual.
 ```
 
 `charset`, `collation`, `timezone` and `strict`/`modes` travel in the DSN rather than as
-separate `SET` statements after connecting: the Go driver applies them itself. `parseTime`
-is deliberately off — without it `DATE`/`DATETIME`/`TIMESTAMP` arrive as the
-`Y-m-d H:i:s` string `Model::getDateFormat()` expects.
+separate `SET` statements after connecting. The first three are connect options the
+extension knows by name; `sql_mode` — and anything under `dsn_params` — is what this DSN
+format says an unrecognised parameter is: a session system variable, issued as one `SET`
+on every connection the pool opens, after the driver's own setup and therefore winning
+over it. `unix_socket` is honoured too, as `unix(/path/to.sock)`.
+
+`parseTime` is not sent, and would do nothing if it were: the extension accepts it and
+ignores it, and `DATE`/`DATETIME`/`TIMESTAMP` always arrive RFC3339.
 
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_DB_TIMEOUT_MS` | `30000` | deadline for one statement; for a cursor, for its whole life |
-| `SCONCUR_DB_MAX_OPEN_CONNS` | `20` | the Go pool size |
-| `SCONCUR_DB_MAX_IDLE_CONNS` | `0` | idle connections; `0` means the same as `max_open_conns` |
+| `SCONCUR_DB_MAX_OPEN_CONNS` | `20` | the pool size in the extension; `0` is not "no limit", it is the extension's own 32 |
+| `SCONCUR_DB_MAX_IDLE_CONNS` | `0` | accepted and not applied: the pool keeps every idle connection up to the cap. It still keys the pool, so two values mean two pools |
 | `SCONCUR_DB_CONN_MAX_LIFETIME_MS` | `0` | connection lifetime; `0` means no limit |
 
 A bounded pool is not caution: every concurrent statement takes a connection of its own,
@@ -465,16 +470,41 @@ already lands there.
 
 ### Differences from PDO
 
-- Types. PDO with emulation returns everything as strings; the Go side normalizes:
+- Types. PDO with emulation returns everything as strings; the extension normalizes:
   integers → `int`, `FLOAT`/`DOUBLE` → `float`, `DECIMAL` → string, `NULL` → `null`.
   Eloquent hides that; a strict `===` against a string in application code does not.
+  `TINYINT(1)` is an `int` rather than a `bool`, and an unsigned `BIGINT` above
+  `PHP_INT_MAX` arrives as a decimal string, because it does not fit a signed 64-bit int.
+- Dates. `DATE`/`DATETIME`/`TIMESTAMP` arrive as RFC3339 (`2026-09-05T10:17:40Z`), not as
+  the `Y-m-d H:i:s` string PDO gives. Eloquent is unaffected — `Model::getDateFormat()`
+  does not match, so `asDateTime()` falls through to `Date::parse()`, which reads it — but
+  a raw `select()` value handed straight to something expecting the PDO spelling is not.
+- An `UPDATE` answers with the rows it **matched**, not the rows it changed. The driver
+  negotiates `CLIENT_FOUND_ROWS` and PDO does not, so `DB::update()` on a row already
+  holding the new value returns 1 here and 0 there. Code reading that count as "did
+  anything actually change" is reading something else. There is no switch: the flag is
+  negotiated in the handshake, `clientFoundRows=false` in the DSN is refused rather than
+  applied, and `ROW_COUNT()` answers the same number. The two connections can only be
+  made to agree from the other side: `'options' => [PDO::MYSQL_ATTR_FOUND_ROWS => true]`
+  on the `mysql` entry puts PDO on the same flag. Otherwise ask the question in the
+  statement — exclude the rows that would not change, and matched is changed:
+
+  ```php
+  DB::table('notes')
+      ->where('id', $id)
+      ->whereRaw('NOT (title <=> ?)', [$title])
+      ->update(['title' => $title]);
+  ```
+
+  `<=>` is the null-safe comparison, so a `NULL` column is compared rather than dropped
+  the way `<>` would drop it.
 - `getPdo()`/`getReadPdo()` throw: there is no PDO object. Code that needs PDO works
   through the `mysql` connection.
 - `selectResultSets()` is not supported: the feature returns one result set per query.
 - Rows always arrive as `stdClass` — that is Laravel's default `fetchMode`, and the
   connection does not let it be changed anyway.
 - **Column order within a row is not guaranteed.** PDO returns them in `SELECT` order;
-  here a row crosses the PHP↔Go boundary as a msgpack map, and a map does not preserve key
+  here a row crosses the PHP↔extension boundary as a msgpack map, and a map does not preserve key
   order — so two identical queries in a row give different field orders. Reading by name
   works as usual, so the ORM, `->id`, `->toArray()` and `where` never notice. What does
   notice is whatever relies on the order: `array_values($row)`, destructuring
@@ -617,7 +647,7 @@ Not from ENV: `workerScript=base_path('artisan')`,
 `workerArgs=['sconcur:servers:http:start']`, `phpArgs=[]`, and
 `runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
 
-### Groups (SConcur 0.11)
+### Groups (SConcur 0.12)
 
 One master supervises several unlike pools under one lock and one journal, so
 `workerScript`, `workerCount`, `workerArgs` and `server` live not at the top level of the
@@ -831,7 +861,7 @@ Two rules the pool will not check for you:
 2. **A tick does not touch process-global state** — `config()->set`, `Auth`, `Request`,
    static properties. Ticks of different tasks interleave, and with preemption on, at any
    opcode boundary. A transaction is not in that category if it is on `sconcur_mysql`: the
-   nesting level lies in the coroutine context and the Go side pins it to a physical
+   nesting level lies in the coroutine context and the extension pins it to a physical
    connection of its own, so a neighbouring task cannot enter it. On the PDO connection it
    is in that category — there the PDO object is one per process.
 
@@ -840,7 +870,7 @@ freeze the whole process, every coroutine of it at once. The wait is cut into ch
 (`SCONCUR_TASKS_SLEEP_CHUNK_MS`) for two reasons — a pause has to be interruptible once
 there is nothing left to wait for, and PHP has to reach an opcode boundary regularly or
 the deferred signal handler never runs at all: a process whose coroutines are all parked
-in Go executes no PHP and will not see SIGTERM.
+in the extension executes no PHP and will not see SIGTERM.
 
 ### Driving it from outside
 
@@ -862,10 +892,11 @@ the tasks listed instead of every configured one.
 ### The pool's telemetry
 
 The pool is the master's only worker that reports on itself. For the others the snapshots
-are sent by the Go side of their runtime, and here there is no such runtime — so
+are sent by the extension's own runtime, and here there is no such runtime — so
 `TaskPoolTelemetry` reads RSS and CPU out of `/proc` once a second and writes a frame into
-the collector's unix socket (a 4-byte length prefix, a JSON body). The Go runtime memory
-and the goroutine count do not exist for such a worker and go out as zeros.
+the collector's unix socket (a 4-byte length prefix, a JSON body). The count of live tasks
+in the extension runtime (`runtimeTasks`) does not exist for such a worker and goes out as
+zero.
 
 The tick counters (`TaskPoolMetrics`) go into the snapshot's `consumers` section: a tick is
 to a task what a delivery is to a consumer, so the panel's columns fill up with no change
@@ -894,7 +925,7 @@ What the page shows:
 
 | Block | What it shows |
 |---|---|
-| Master telemetry | the master's panel as-is: workers by group, how many requests and messages are in flight right now, memory, goroutines. Refreshed once a second |
+| Master telemetry | the master's panel as-is: workers by group, how many requests and messages are in flight right now, memory, live tasks in the extension runtime. Refreshed once a second |
 | Pool sizes | how many processes each pool holds and how many consumers a queue gets in each of them; applying rolls only the groups whose numbers changed |
 | Concurrency | the same cooperative pause N times: as coroutines of one `WaitGroup` against a sequential run. On 20 pauses of 150 ms that is 152 ms against 3026 ms in one process |
 | MySQL | Eloquent over `sconcur_mysql`, including several concurrent inserts, each in its own transaction |

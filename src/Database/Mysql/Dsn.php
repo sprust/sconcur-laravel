@@ -5,25 +5,29 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Database\Mysql;
 
 /**
- * Builds a go-sql-driver/mysql DSN out of a config/database.php connection entry.
+ * Builds the MySQL DSN out of a config/database.php connection entry.
  *
  * The PDO connector applies charset, timezone and sql_mode as SET statements after
- * connecting; the Go driver takes them in the DSN instead. Verified against
- * go-sql-driver/mysql 1.8.1, the version the extension is built with
- * (ext/go.mod):
+ * connecting; this driver takes them in the DSN instead. Verified against the parser the
+ * extension carries (ext/src/features/sql/dsn.rs) in sconcur 0.12.1:
  *
- * - `charset` and `collation` are parameters it knows: handleParams() turns them
- *   into `SET NAMES <charset> COLLATE <collation>`;
- * - anything else it does not recognise lands in cfg.Params and goes out as one
- *   `SET a = x, b = y` on connect, with the value url-decoded first. So a value
- *   MySQL needs quoted carries its quotes here, and everything is written with
- *   rawurlencode() — url.QueryUnescape reads `+` as a space, which would corrupt
- *   a timezone like `+00:00`.
+ * - `charset`, `collation`, `time_zone` and `tls` are connect options it knows by name;
+ * - anything else it does not recognise is what this DSN format says it is — a session
+ *   system variable, issued as one `SET name=value, ...` on every connection the pool
+ *   opens, after the driver's own session setup and therefore winning over it. That is
+ *   how `sql_mode` gets there;
+ * - a parameter value is percent-decoded, so everything is written with rawurlencode().
+ *   A value MySQL needs quoted carries its quotes here. Unlike a URL query string a
+ *   literal `+` survives as a `+`, but encoding it costs nothing and keeps one rule.
  *
- * parseTime is deliberately absent, unlike the hand-rolled DSN this replaces:
- * without it DATE/DATETIME/TIMESTAMP arrive as `Y-m-d H:i:s`, which is what
- * Model::getDateFormat() expects. With it they arrive RFC3339 and Eloquent only
- * parses them through its fallback path.
+ * Credentials are the exception: the parser splits them on the last `@` and the first
+ * `:` and unescapes neither half, so they go in verbatim — percent-encoding a password
+ * would send it percent-encoded.
+ *
+ * parseTime is deliberately absent, and would do nothing if it were there: the extension
+ * accepts it and ignores it (it configured the retired Go client), and
+ * DATE/DATETIME/TIMESTAMP always arrive RFC3339. Eloquent reads them anyway —
+ * Model::getDateFormat() does not match, so asDateTime() falls through to Date::parse().
  */
 class Dsn
 {
@@ -42,8 +46,8 @@ class Dsn
      */
     public static function build(array $config): string
     {
-        $credentials = rawurlencode((string) ($config['username'] ?? ''))
-            . ':' . rawurlencode((string) ($config['password'] ?? ''));
+        $credentials = (string) ($config['username'] ?? '')
+            . ':' . (string) ($config['password'] ?? '');
 
         $address = self::address($config);
 

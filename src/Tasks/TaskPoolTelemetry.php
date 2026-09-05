@@ -8,11 +8,11 @@ namespace SConcur\Laravel\Tasks;
  * Pushes the pool's snapshots to the master's telemetry collector.
  *
  * TODO: temporary, and deliberately so. Every other worker of the master reports from
- * the Go side of its runtime (ext/internal/stats), which samples and sends without the
- * PHP thread doing anything; this pool runs no such runtime, so until the Go side learns
- * to report for a plain worker, the sampling and the framing are done here by hand. When
- * that lands, drop this class and the sender it starts — the wire format below is the
- * contract it will speak, so nothing else has to change.
+ * the extension side of its runtime (ext/src/stats), which samples and sends without the
+ * PHP thread doing anything; this pool runs no such runtime, so until the extension
+ * learns to report for a plain worker, the sampling and the framing are done here by
+ * hand. When that lands, drop this class and the sender it starts — the wire format below
+ * is the contract it will speak, so nothing else has to change.
  *
  * The library's own SocketClient would be the natural way to write this, and it is not
  * usable here: it dials "host:port" and its v1 says so in as many words — "unix-сокеты
@@ -29,8 +29,8 @@ namespace SConcur\Laravel\Tasks;
  * connection to mean the worker left, so the socket is held open for the pool's life.
  *
  * What a PHP-side sampler can and cannot know: RSS and CPU come from /proc, which is the
- * same source the Go side reads. Go-runtime memory and the goroutine count do not exist
- * for this worker and go out as zero. None of the three workload sections is sent —
+ * same source the extension reads. The count of live tasks in the extension runtime does
+ * not exist for this worker and goes out as zero. None of the three workload sections is sent —
  * requests belong to a server and connections to a socket server. The third,
  * `consumers`, is sent: a tick is to a task what a delivery is to a consumer, so the
  * pool's counters fit it exactly and the panel's own columns fill in unchanged
@@ -175,14 +175,12 @@ class TaskPoolTelemetry
             'uptimeSeconds' => round($now - $this->startedAt, 3),
             'memory'        => [
                 'rssBytes' => $rssBytes,
-                // No Go runtime of our own to account for, so the whole of RSS is the
-                // PHP side. Reported rather than omitted: the panel subtracts one from
-                // the other and would otherwise show the split as unknown.
-                'goRuntimeBytes'    => 0,
-                'nonExtensionBytes' => $rssBytes,
             ],
             'cpuPercent' => $this->cpuPercent($now),
-            'goroutines' => 0,
+            // The pool runs no extension runtime of its own, so it has no tasks there to
+            // count. Reported rather than omitted: the field is part of every snapshot,
+            // and a zero says "none" where a missing key says nothing.
+            'runtimeTasks' => 0,
             // The pool's ticks, in the section the panel already renders as
             // "In-flight / Handled / Refused". Omitted when the pool is configured not
             // to report them, and a section nobody sends is left out of the answer.
@@ -190,7 +188,7 @@ class TaskPoolTelemetry
         ];
     }
 
-    /** RSS of the whole process, the same field the Go sampler reads. */
+    /** RSS of the whole process, the same field the extension's sampler reads. */
     protected function rssBytes(): int
     {
         $status = @file_get_contents('/proc/self/status');
@@ -204,8 +202,8 @@ class TaskPoolTelemetry
 
     /**
      * CPU used since the previous sample, as a percentage of one core — the same shape
-     * as the Go sampler's, and like it, zero on the first sample because a rate needs
-     * two points.
+     * as the extension's sampler, and like it, zero on the first sample because a rate
+     * needs two points.
      */
     protected function cpuPercent(float $now): float
     {

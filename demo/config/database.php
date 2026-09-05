@@ -15,7 +15,7 @@ return [
     'connections' => [
         /*
         | The non-blocking MySQL connection. Same keys as the PDO one, plus the pool
-        | sizes the Go side raises: every concurrent statement takes its own physical
+        | sizes the extension raises: every concurrent statement takes its own physical
         | connection, so the ceiling is what keeps a fan-out from walking into the
         | server's max_connections.
         */

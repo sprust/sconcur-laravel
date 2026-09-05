@@ -95,7 +95,14 @@ workbench/
   трогает другую (это главное обещание `CoroutineTransactionsManager` и
   `TransactionStack`);
 - `Model::saveOrFail()` открывает транзакцию — путь, который README называет
-  неочевидным.
+  неочевидным;
+- дубликат ключа приходит как `UniqueConstraintViolationException`, а не как
+  `QueryException`: на этом стоят `firstOrCreate()`/`createOrFirst()`, а решает
+  это сопоставление с текстом драйвера, который меняется от версии к версии
+  (`UniqueConstraintTest`, та же проверка на PDO рядом);
+- `UPDATE` считает совпавшие строки, а не изменённые, — расхождение с PDO,
+  которое README обещает словами, а `AffectedRowsTest` держит числом (обе
+  стороны рядом, иначе сравнивать не с чем).
 
 ### `Queue/Rabbitmq`
 

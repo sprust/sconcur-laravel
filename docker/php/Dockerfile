@@ -27,7 +27,7 @@ RUN curl -fSL --connect-timeout 10 --retry 3 \
         -o /usr/local/bin/pie && \
     chmod +x /usr/local/bin/pie
 
-# msgpack carries every payload across the PHP↔Go boundary and is what the library
+# msgpack carries every payload across the PHP↔extension boundary and is what the library
 # itself requires (ext-msgpack: 3.0.1). Pinned exactly, like that constraint.
 RUN pie install msgpack/msgpack-php:3.0.1
 
@@ -46,7 +46,7 @@ RUN docker-php-ext-install \
         pdo_mysql \
         zip
 
-# The sconcur Go extension, pinned to the sconcur/sconcur version composer.lock
+# The sconcur extension, pinned to the sconcur/sconcur version composer.lock
 # resolved. The two cross a protocol boundary that changes with the version, so the .so
 # and the PHP side must never be picked independently — hence reading the lock rather
 # than an ARG somebody can forget to bump.

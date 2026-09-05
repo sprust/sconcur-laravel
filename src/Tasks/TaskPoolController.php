@@ -15,7 +15,7 @@ use SConcur\WaitGroup;
  * It is a member of the same group as the tasks and does no work of its own, which is
  * the point: something has to execute PHP on a regular tick for a pending signal handler
  * to run at all, and something has to poll the control channel. A pool whose tasks were
- * all parked in Go would notice neither.
+ * all parked in the extension would notice neither.
  *
  * It never touches a task's coroutine — nothing can. It writes to the shared state, and
  * each task's loop reads it between ticks. The one forcible tool is unwinding the whole

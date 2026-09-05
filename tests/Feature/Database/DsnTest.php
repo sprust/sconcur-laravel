@@ -9,7 +9,7 @@ use SConcur\Laravel\Database\Mysql\Dsn;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
 
 /**
- * The DSN is where a config/database.php entry becomes something the Go driver
+ * The DSN is where a config/database.php entry becomes something the extension
  * understands. The PDO connector applies charset, timezone and sql_mode as SET
  * statements after connecting; here they have to ride in the DSN, so what this builds
  * is the whole of the connection's behaviour.
@@ -44,12 +44,29 @@ class DsnTest extends BaseTestCase
     }
 
     /**
-     * A value the driver does not recognise goes out as one SET statement on connect,
-     * url-decoded first — and url.QueryUnescape reads `+` as a space, which would
-     * corrupt a timezone like `+00:00`. Hence rawurlencode everywhere.
+     * The parser splits the credentials on the last `@` and the first `:` and unescapes
+     * neither half — unlike a parameter value, which it percent-decodes. Encoding them
+     * here would send the password encoded, which is simply the wrong password.
      */
     #[Test]
-    public function aTimezoneIsEncodedSoThePlusSurvives(): void
+    public function credentialsTravelVerbatim(): void
+    {
+        $dsn = Dsn::build([
+            'host'     => '127.0.0.1',
+            'database' => 'demo',
+            'username' => 'user',
+            'password' => 'p@ss w:rd',
+        ]);
+
+        self::assertSame('user:p@ss w:rd@tcp(127.0.0.1:3306)/demo', $dsn);
+    }
+
+    /**
+     * A parameter value is percent-decoded on the other side, so a value carrying its
+     * own quotes — which a system variable does — has to be encoded here.
+     */
+    #[Test]
+    public function aTimezoneIsEncodedSoItsQuotesAndPlusSurvive(): void
     {
         $dsn = Dsn::build([
             'host'     => '127.0.0.1',
@@ -107,15 +124,16 @@ class DsnTest extends BaseTestCase
             'host'       => '127.0.0.1',
             'database'   => 'demo',
             'username'   => 'user',
-            'dsn_params' => ['readTimeout' => '5s'],
+            'dsn_params' => ['group_concat_max_len' => '4096'],
         ]);
 
-        self::assertStringContainsString('readTimeout=5s', $dsn);
+        self::assertStringContainsString('group_concat_max_len=4096', $dsn);
     }
 
     /**
-     * parseTime is deliberately absent: without it DATE/DATETIME/TIMESTAMP arrive as
-     * `Y-m-d H:i:s`, which is what Model::getDateFormat() expects.
+     * parseTime is deliberately absent, and the extension would ignore it anyway: it
+     * configured the retired Go client, and DATE/DATETIME/TIMESTAMP always arrive
+     * RFC3339 now.
      */
     #[Test]
     public function parseTimeIsNeverSent(): void

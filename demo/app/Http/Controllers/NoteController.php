@@ -66,7 +66,7 @@ class NoteController
     /**
      * Several inserts at once, each in its own coroutine, and each in a transaction of
      * its own. On the sconcur_mysql connection that works: the nesting level lives in
-     * the coroutine context and the Go side pins the transaction to a physical
+     * the coroutine context and the extension pins the transaction to a physical
      * connection of its own, so the neighbours cannot join it. On the PDO `mysql`
      * connection the handle is one per process and this is exactly what would go wrong
      * — switch DB_CONNECTION to see it.
