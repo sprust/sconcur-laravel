@@ -1,7 +1,7 @@
 {
     "name": "sconcur/laravel",
     "description": "Laravel integration for SConcur: concurrent HTTP worker and coroutine-scoped application",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "license": "MIT",
     "authors": [
         {
