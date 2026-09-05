@@ -31,18 +31,16 @@ implementations are.
 
 ## Further reading
 
-- [README.md](../README.md) / [README.ru.md](../README.ru.md) — package overview,
-  installation, artisan commands, ENV reference. A bilingual pair: the two carry the
-  same sections in the same order, so a change to one belongs in the other
-- [docs/fiber-safe-laravel-bridge.ru.md](../docs/fiber-safe-laravel-bridge.ru.md) —
-  why Octane's model is not fiber-safe and what replaces it here
-- [docs/sconcur-coroutine-context.ru.md](../docs/sconcur-coroutine-context.ru.md) —
-  the coroutine context this package builds on
-- [docs/task-pool.ru.md](../docs/task-pool.ru.md) — the periodic task pool
-- [docs/websocket.ru.md](../docs/websocket.ru.md) — the WebSocket pool: protocol,
-  channel signatures, the broadcast bus, presence
-- [demo/README.md](../demo/README.md) — the demo application
-- [.ai/plans/](plans/) — detailed designs for roadmap items
+- [README.md](../README.md) / [README.ru.md](../README.ru.md) — the overview: what the
+  package is, the four runtimes, the artisan commands, and the `## Documentation` index
+  that lists every document
+- [docs/](../docs/) — one topic per document, each a bilingual pair. Everything longer
+  than a few paragraphs lives here rather than in the README
+- [demo/README.md](../demo/README.md) / [demo/README.ru.md](../demo/README.ru.md) —
+  the demo application
+- [.ai/plans/](plans/) — detailed designs, including
+  [bridge/](plans/bridge/): why Octane's model is not fiber-safe, what replaces it
+  here, and the coroutine context this package builds on
 
 ## Plans
 
@@ -212,19 +210,19 @@ The demo is not a workbench because testbench builds
 
 ### Language
 
-**English everywhere except the Russian documentation.** Russian belongs in exactly two
-places: the `docs/*.ru.md` files and `.ai/plans/`, which is written in Russian by a
-maintainer decision.
+**English everywhere except the Russian half of the documentation.** Russian belongs in
+the `*.ru.md` files and in `.ai/plans/`, which is written in Russian by a maintainer
+decision.
 
 Everything else is English, with no exceptions: code and its comments, PHPDoc,
 exception and log messages, test names and failure messages, shell scripts including
 everything they print, and commit messages.
 
-`README.md` and `README.ru.md` are the bilingual pair the neighbouring projects use:
-`X.md` / `X.ru.md`, with a language switcher on the first line. They mirror each other
-section for section — never add a section to one alone, and never let the two describe
-different behavior. Everything else under `docs/` is still Russian-only (`*.ru.md`);
-pairing it up is a separate job.
+**Every document is a bilingual pair**, the way the `sconcur` library keeps its own:
+`X.md` in English and `X.ru.md` in Russian, `README.md` and `README.ru.md` included.
+The two mirror each other section for section — never add a section to one alone, and
+never let them describe different behaviour. A document that exists in one language
+only is unfinished.
 
 ### Naming
 
@@ -270,11 +268,38 @@ and do not mass-convert as a side effect of an unrelated change.
 
 ## Documentation style
 
+The layout and the shape of a page follow the `sconcur` library's own docs — the two
+projects are read side by side, and a reader should not have to learn two conventions.
+
+### Layout
+
+- **One topic per document, under `docs/`.** The README is an overview and an index, not
+  a manual: it carries what the project is, what it needs, how to get it running, and a
+  list of the documents. Anything that grows past a few paragraphs moves to a document
+  of its own and is linked from there.
+- **A bilingual pair for every document**, `X.md` and `X.ru.md`. See "Language".
+- **A language switcher on the first line**, before the title:
+  `English | [Русский](x.ru.md)` in the English half, `[English](x.md) | Русский` in the
+  Russian one. Then a blank line, then the `#` title.
+- **Links stay in their own language**: the English document links to `x.md`, the Russian
+  one to `x.ru.md`.
+- **A table of contents in a long document** — `## Table of contents` / `## Оглавление`
+  right after the opening paragraphs, as a list of links to its own sections.
+
+### Writing
+
 - **Verify every technical claim against the code before writing it** — class and
   method names/signatures, option names and defaults, enum cases, CLI flags, file
   paths, behavioral claims. Fix inaccuracies; never guess.
 - **Dry and compact.** Short sentences, no marketing metaphors, no long reasoning
   around a fact a table already states.
+- **The present tense only.** A document says what the code does, not what it used to do,
+  what was tried before, when something was measured, or which release changed it. That
+  belongs in the git history and in `.ai/plans/`. "There used to be", "this was fixed
+  in", "verified on such a date" — none of it goes in `docs/` or the README.
+- **No slang and no shorthand.** Write the term out: "connection", not "conn"; "worker
+  process", not "воркер-процесс" where a Russian word exists. Words the project itself
+  uses — coroutine, fiber, worker, broadcast — are terms, not slang, and stay.
 - **Minimal bold.** Use `**bold**` only for a genuinely critical warning or a couple of
   key terms — heavy bolding is the top "AI-generated" tell.
 - **Do not put source line numbers in docs** — they go stale. Reference file paths only.

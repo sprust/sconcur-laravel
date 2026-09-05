@@ -21,7 +21,7 @@ return [
     |--------------------------------------------------------------------------
     | Extra container aliases that must be resolved per-coroutine (in addition to
     | the built-in ScopedService set: request, session, auth, auth.driver, cookie).
-    | See docs/fiber-safe-laravel-bridge.ru.md.
+    | See .ai/plans/bridge/fiber-safe-laravel-bridge.md.
     */
     'scoped_services' => [
         // \Some\Package\Manager::class,
@@ -322,7 +322,7 @@ return [
     | A task implements tick() and nothing else — the loop, the pauses, the reporting and
     | the stop belong to the pool. `sconcur:tasks:stop` and `sconcur:tasks:restart` reach
     | a running pool through `control_key`, which is what lets another container manage
-    | it. See the package's docs/task-pool.ru.md.
+    | it. See the package's docs/task-pool.md.
     */
     'tasks' => [
         'control_key' => env('SCONCUR_TASKS_CONTROL_KEY', 'sconcur:tasks:control'),

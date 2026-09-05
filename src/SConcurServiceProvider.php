@@ -83,7 +83,7 @@ use SConcur\Laravel\Ws\WsPresenceOptions;
  * coroutine is the process root — a single store for a single caller, which is exactly
  * what the stock implementations are.
  *
- * See docs/fiber-safe-laravel-bridge.ru.md.
+ * See .ai/plans/bridge/fiber-safe-laravel-bridge.md.
  */
 class SConcurServiceProvider extends ServiceProvider
 {

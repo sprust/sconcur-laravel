@@ -1,3 +1,5 @@
+English | [Русский](README.ru.md)
+
 # Demo application
 
 A minimal Laravel application the SConcur master serves, so the package can be seen
@@ -89,7 +91,8 @@ the two ends, so they do not match.
 
 The client is written against the wire protocol with the browser's own `WebSocket` rather
 than through `laravel-echo`: the demo has no bundler, and the frames are the same ones Echo
-sends. A real application uses Echo — the package README shows the config it needs.
+sends. A real application uses Echo — [docs/websocket.md](../docs/websocket.md) shows the
+config it needs.
 
 The badge beside the heading says what is true now — the log below only says what
 happened. It carries the socket id once the handshake is through, and since a socket id is

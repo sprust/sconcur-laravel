@@ -28,7 +28,7 @@ use SConcur\Context\Context;
  * outside a fiber is the process root, and every coroutine reads through to that.
  *
  * Ported from yangusik/laravel-spawn (AsyncApplication), adapted to SConcur's
- * Context::current(). See docs/fiber-safe-laravel-bridge.ru.md §4.
+ * Context::current(). See .ai/plans/bridge/fiber-safe-laravel-bridge.md §4.
  */
 class AsyncApplication extends Application
 {
