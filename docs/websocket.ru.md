@@ -287,6 +287,96 @@ Event::listen(ConnectionOpened::class, function (ConnectionOpened $event): void 
 блокирующе, останавливает весь воркер — писать в базу оттуда синхронным драйвером не
 стоит.
 
+### Фронт на отдельном origin
+
+Со стороны сервера ничего не меняется: подходит любой SPA, лишь бы он говорил на этом
+протоколе. `laravel-echo` и `pusher-js` поставляются с типами (`dist/echo.d.ts`), так что
+на TypeScript это выглядит так:
+
+```ts
+// composables/useEcho.ts
+import Echo from 'laravel-echo'
+import Pusher from 'pusher-js'
+
+export const echo = new Echo<'pusher'>({
+    broadcaster: 'pusher',
+    Pusher,
+    key: import.meta.env.VITE_SCONCUR_WS_KEY,
+    // Хост API, а не хост фронта: сокет идёт туда же, куда и остальные запросы.
+    wsHost: import.meta.env.VITE_API_HOST,
+    wsPort: 80,
+    forceTLS: false,
+    disableStats: true,
+    enabledTransports: ['ws', 'wss'],
+    cluster: '',
+    authEndpoint: `${import.meta.env.VITE_API_URL}/broadcasting/auth`,
+    bearerToken: localStorage.getItem('token'),
+})
+```
+
+Три вещи, на которых спотыкаются:
+
+1. **Само подключение к сокету CORS не касается** — рукопожатие не проходит preflight, и
+   браузер не спрашивает разрешения. Проверку `allowedOrigins` пул серверу не передаёт:
+   это массив, а `WsServer::fromArgs` разбирает только скаляры. То есть открыть
+   соединение может кто угодно откуда угодно, и защищает не origin, а подпись канала.
+   Нужен барьер на самом подключении — это firewall или nginx, не пул.
+2. **А `/broadcasting/auth` — обычный кросс-доменный POST**, и вот ему нужны и CORS, и
+   способ узнать пользователя. Либо сессия Sanctum с `withCredentials`, либо токен: у
+   Echo для этого есть `bearerToken` и `auth.headers`, он сам подставит заголовок
+   `Authorization`. Публичные каналы этого маршрута не касаются вовсе.
+3. **`wsHost` указывает на хост API.** Nginx там должен пропускать Upgrade на
+   `/app/` — тот самый отдельный `location`, что и для монолита.
+
+### Клиент без Echo
+
+Echo обязательным не является: протокол описан выше целиком, и демо-страница этого
+репозитория говорит на нём голым `WebSocket` — без сборки, без зависимостей. Порядок
+кадров тот же:
+
+```ts
+const socket = new WebSocket(`wss://${host}/app/${key}?protocol=7`)
+
+socket.onmessage = (message) => {
+    const frame = JSON.parse(message.data)
+    // `data` — строка с JSON внутри, в обе стороны. Это протокол, а не случайность.
+    const data = typeof frame.data === 'string' ? JSON.parse(frame.data || '{}') : frame.data
+
+    if (frame.event === 'pusher:connection_established') {
+        socket.send(JSON.stringify({event: 'pusher:subscribe', data: {channel: 'orders'}}))
+    }
+
+    if (frame.event === 'pusher:ping') {
+        socket.send(JSON.stringify({event: 'pusher:pong', data: {}}))
+    }
+}
+```
+
+Для приватного канала в `pusher:subscribe` добавляется `auth`, полученный от
+`/broadcasting/auth`, для presence — ещё и `channel_data` оттуда же.
+
+### Публикация не из Laravel
+
+Шина — обычный fanout-обмен, поэтому положить в неё сообщение может любой сервис,
+умеющий AMQP. Тело — плоский JSON:
+
+```json
+{
+  "channels": ["private-orders.7"],
+  "event": "OrderShipped",
+  "data": "{\"id\":7}",
+  "socket": null
+}
+```
+
+`data` — строка с JSON внутри, ровно та, что уйдёт клиенту: воркеры её не разбирают.
+`socket` — соединение, которому доставлять не надо (аналог `toOthers()`); ключа может не
+быть вовсе. Сообщение, которое не разбирается, воркер молча пропускает — шина общая, и
+чужой кадр не должен его ронять.
+
+За Laravel остаётся ровно одно: выдача подписи на приватный и presence-канал, потому что
+она считается по правилам доступа приложения.
+
 ### Если ничего не приходит
 
 По порядку, сверху вниз:
@@ -301,7 +391,9 @@ Event::listen(ConnectionOpened::class, function (ConnectionOpened $event): void 
    таймаутами рвёт соединение раз в минуту.
 5. Подписка прошла? На отказ приходит `pusher:subscription_error`, и Echo отдаёт его в
    `.error()`. Чаще всего это несошедшаяся подпись — секрет в http-воркере и в
-   ws-воркере должен быть один.
+   ws-воркере должен быть один. Если фронт на отдельном origin, смотрите ещё и на
+   `/broadcasting/auth`: сокет открывается без CORS, а этот запрос — нет, и его
+   отклонённый preflight выглядит как молчащий приватный канал.
 6. Событие ушло в шину? Обмен `sconcur.ws` виден в панели RabbitMQ, а привязанных к
    нему очередей — по одной на каждый ws-воркер, у которого есть хотя бы одно
    соединение. У простаивающего воркера очереди нет: подписчик уходит вместе с

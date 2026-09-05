@@ -931,6 +931,11 @@ client events, broadcasting from a job or a task, the pool's own events, and wha
 check when nothing arrives — are in
 [docs/websocket.ru.md](docs/websocket.ru.md#примеры) (in Russian).
 
+Echo is not required and neither is a Blade front end: a separate SPA on its own origin
+works the same, a client can speak the protocol over a plain `WebSocket`, and any service
+that can publish to the fanout exchange can broadcast into the pool. What stays with
+Laravel is issuing the channel signature.
+
 ### What it does not do
 
 - No TLS and no `permessage-deflate`: nginx terminates the first, and the extension does
