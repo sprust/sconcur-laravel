@@ -59,7 +59,7 @@ readonly class WsServerRunner
         return WsServer::fromArgs(
             argv: $argv,
             onError: static function (Throwable $exception, Connection $connection) use ($logger): void {
-                $logger->log('connection ' . $connection->id . ' failed: ' . $exception->getMessage());
+                $logger->log('conn', 'connection ' . $connection->id . ' failed: ' . $exception->getMessage());
             },
         );
     }
@@ -81,6 +81,7 @@ readonly class WsServerRunner
 
             if ($value > 0) {
                 $logger->log(
+                    'server',
                     'handlerTimeoutMs is ' . $value . ': every connection will be dropped after that long.'
                     . ' A ws handler lives as long as its connection — set it to 0.',
                 );

@@ -55,11 +55,20 @@ readonly class ConnectionHandler
     {
         $channels = $state->channels();
 
-        foreach ($channels as $channel) {
-            $this->leaveChannel($state, ChannelName::fromString($channel));
+        try {
+            foreach ($channels as $channel) {
+                $this->leaveChannel($state, ChannelName::fromString($channel));
+            }
+        } catch (Throwable $exception) {
+            // Leaving a presence channel talks to the shared store, and that store can be
+            // down. The registry has to be cleared anyway: an entry left behind is a dead
+            // socket the fan-out keeps writing to, and — because the bus subscriber lives
+            // exactly as long as the registry is not empty — a coroutine that never ends
+            // and a graceful stop that never finishes.
+            $this->logger->log('conn', 'teardown failed for ' . $state->socketId . ': ' . $exception->getMessage());
+        } finally {
+            $this->registry->forget($state->socketId);
         }
-
-        $this->registry->forget($state->socketId);
 
         $this->events->dispatch(new ConnectionClosed(
             socketId: $state->socketId,
@@ -82,7 +91,7 @@ readonly class ConnectionHandler
         }
 
         match (ProtocolEventEnum::tryFrom($message->event)) {
-            ProtocolEventEnum::Ping        => $this->write($state, $this->codec->encode(ProtocolEventEnum::Pong)),
+            ProtocolEventEnum::Ping        => $this->write($state, $this->codec->encode(event: ProtocolEventEnum::Pong)),
             ProtocolEventEnum::Subscribe   => $this->handleSubscribe($state, $message),
             ProtocolEventEnum::Unsubscribe => $this->handleUnsubscribe($state, $message),
             // Anything else is a frame this server does not speak. Ignored rather than
@@ -274,9 +283,19 @@ readonly class ConnectionHandler
 
         $userId = $this->presencePayload->userId($member);
 
+        if ($userId === null) {
+            return;
+        }
+
         // A second tab of the same person is not an arrival, and announcing it would add
         // a member the client already has.
-        if ($userId === null || $this->presencePayload->hasOtherConnection($before, $state->socketId, $userId)) {
+        $alreadyPresent = $this->presencePayload->hasOtherConnection(
+            members: $before,
+            socketId: $state->socketId,
+            userId: $userId,
+        );
+
+        if ($alreadyPresent) {
             return;
         }
 
@@ -308,7 +327,13 @@ readonly class ConnectionHandler
 
         $remaining = $this->presence->members($channel->raw);
 
-        if ($this->presencePayload->hasOtherConnection($remaining, $state->socketId, $userId)) {
+        $stillPresent = $this->presencePayload->hasOtherConnection(
+            members: $remaining,
+            socketId: $state->socketId,
+            userId: $userId,
+        );
+
+        if ($stillPresent) {
             return;
         }
 
@@ -354,7 +379,7 @@ readonly class ConnectionHandler
             ));
         } catch (Throwable $exception) {
             // The connection itself is fine; what failed is telling the other workers.
-            $this->logger->log('publish failed on ' . $channel . ': ' . $exception->getMessage());
+            $this->logger->log('conn', 'publish failed on ' . $channel . ': ' . $exception->getMessage());
         }
     }
 

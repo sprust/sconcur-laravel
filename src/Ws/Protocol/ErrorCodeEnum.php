@@ -20,13 +20,4 @@ enum ErrorCodeEnum: int
 
     /** A limit of this server was reached (channels per connection, connections). */
     case OverCapacity = 4100;
-
-    /** Anything unexpected on our side; the client may come straight back. */
-    case GenericReconnect = 4200;
-
-    /** Whether the client is expected to give up rather than reconnect. */
-    public function isFatal(): bool
-    {
-        return $this->value < 4100;
-    }
 }

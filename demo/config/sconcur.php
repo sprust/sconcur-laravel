@@ -117,7 +117,7 @@ return [
                     // The key is part of the path, and the comparison ignores the query
                     // string — so /app/{key}?protocol=7 matches and a wrong key is a 404
                     // on the handshake.
-                    'path'      => '/app/' . env('SCONCUR_WS_APP_KEY', ''),
+                    'path'      => rtrim(env('SCONCUR_WS_PATH_PREFIX', '/app'), '/') . '/' . env('SCONCUR_WS_APP_KEY', ''),
 
                     'handshakeTimeoutMs' => (int) env('SCONCUR_WS_HANDSHAKE_TIMEOUT_MS', 10000),
                     'idleTimeoutMs'      => (int) env('SCONCUR_WS_IDLE_TIMEOUT_MS', 0),

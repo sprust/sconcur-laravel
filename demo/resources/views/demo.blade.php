@@ -356,6 +356,7 @@
 
 
     document.querySelectorAll('button[data-run]').forEach((button) => {
+        // Не каждая кнопка живёт в actions: ws-панель вешает свой обработчик ниже.
         button.addEventListener('click', async () => {
             button.disabled = true;
             try { await actions[button.dataset.run](); } finally { button.disabled = false; }
@@ -457,7 +458,20 @@
     };
 
     const wsConnect = async () => {
-        const config = await fetchJson('/api/ws');
+        // fetchJson бросает на 5xx, а 502 здесь — обычное дело: соседняя панель катит
+        // http-пул. Без перехвата первый же такой отказ обрывал цепочку переподключения
+        // навсегда — WebSocket не создавался, значит onclose больше не приходил.
+        let config;
+
+        try {
+            config = await fetchJson('/api/ws');
+        } catch (error) {
+            wsState('disconnected, retrying', 'bad');
+
+            setTimeout(wsConnect, 2000);
+
+            return;
+        }
 
         if (config.error || !config.key) {
             wsState('not configured', 'bad');

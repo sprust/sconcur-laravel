@@ -7,11 +7,14 @@ namespace SConcur\Laravel\Ws;
 use DateTimeImmutable;
 
 /**
- * One line per pool event, in the same shape the task pool writes.
+ * One line per pool event, scoped by who produced it — the same shape the task pool
+ * writes in.
  *
  * The master merges every worker's stdout into one journal, so a line has to say who
- * wrote it. Written and flushed immediately: with stdout redirected to a file the stream
- * is block buffered, and the lines a shutting-down worker writes would never arrive.
+ * wrote it, and the scope is what says it: repeating the source inside the message would
+ * print it twice. Written and flushed immediately: with stdout redirected to a file the
+ * stream is block buffered, and the lines a shutting-down worker writes would never
+ * arrive.
  */
 class WsLogger
 {
@@ -19,7 +22,7 @@ class WsLogger
     {
     }
 
-    public function log(string $message): void
+    public function log(string $scope, string $message): void
     {
         $handle = fopen($this->stream, 'a');
 
@@ -29,7 +32,13 @@ class WsLogger
 
         fwrite(
             $handle,
-            sprintf('%s [ws] %s%s', new DateTimeImmutable()->format('Y-m-d\TH:i:s.u'), $message, PHP_EOL),
+            sprintf(
+                '%s [ws %s] %s%s',
+                new DateTimeImmutable()->format('Y-m-d\TH:i:s.u'),
+                $scope,
+                $message,
+                PHP_EOL,
+            ),
         );
 
         fflush($handle);

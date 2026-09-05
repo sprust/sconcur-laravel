@@ -28,6 +28,14 @@ class BusSubscriber
     private bool $running = false;
 
     /**
+     * Counts the subscribers started, so the one finishing knows whether the flag it is
+     * about to clear is still its own. Without it a subscriber unwinding slowly could
+     * clear the flag of the one that replaced it, and every connection after that would
+     * start yet another.
+     */
+    private int $generation = 0;
+
+    /**
      * @param null|Closure(string): void $logger
      */
     public function __construct(
@@ -66,17 +74,32 @@ class BusSubscriber
 
         $this->running = true;
 
-        Scheduler::get()->spawn(function (): void {
+        $generation = ++$this->generation;
+
+        Scheduler::get()->spawn(function () use ($generation): void {
             try {
                 $this->bus->subscribe(
                     handler: $this->fanOut(...),
-                    shouldContinue: fn(): bool => !$this->registry->isEmpty(),
+                    shouldContinue: function () use ($generation): bool {
+                        if (!$this->registry->isEmpty()) {
+                            return true;
+                        }
+
+                        // Released here rather than on the way out: the teardown that
+                        // follows closes a connection and cancels a consumer, both of
+                        // which suspend, and a connection arriving in that window has to
+                        // be able to start a subscriber of its own.
+                        $this->release($generation);
+
+                        return false;
+                    },
                 );
             } catch (Throwable $exception) {
-                $this->log('sconcur ws bus: subscriber stopped: ' . $exception->getMessage());
+                $this->log('subscriber stopped: ' . $exception->getMessage());
             } finally {
-                // Whatever ended it, the next connection is free to start a new one.
-                $this->running = false;
+                // For the ways out that never asked the condition — the stream ending
+                // quietly on shutdown, or a failure.
+                $this->release($generation);
             }
         });
     }
@@ -111,6 +134,16 @@ class BusSubscriber
                 }
             }
         }
+    }
+
+    /** Clears the flag only while it still belongs to this subscriber. */
+    private function release(int $generation): void
+    {
+        if ($this->generation !== $generation) {
+            return;
+        }
+
+        $this->running = false;
     }
 
     private function log(string $line): void

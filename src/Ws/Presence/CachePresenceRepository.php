@@ -7,6 +7,7 @@ namespace SConcur\Laravel\Ws\Presence;
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use SConcur\Features\Sleeper\Sleeper;
 use Throwable;
 
 /**
@@ -22,7 +23,14 @@ use Throwable;
  */
 readonly class CachePresenceRepository implements PresenceRepositoryInterface
 {
-    private const int LOCK_TIMEOUT_SECONDS = 3;
+    /** How long the store holds the lock if the holder dies before releasing it. */
+    private const int LOCK_TTL_SECONDS = 3;
+
+    /** How many times an occupied lock is retried before the change is given up. */
+    private const int LOCK_ATTEMPTS = 12;
+
+    /** The pause between those attempts. */
+    private const int LOCK_RETRY_MS = 25;
 
     public function __construct(
         private CacheRepository $cache,
@@ -73,21 +81,67 @@ readonly class CachePresenceRepository implements PresenceRepositoryInterface
         $lock = $this->lock($channel);
 
         if ($lock === null) {
-            $this->write($channel, $change($this->members($channel)));
+            $this->apply($channel, $change);
 
             return;
         }
 
-        try {
-            $lock->block(self::LOCK_TIMEOUT_SECONDS);
+        if (!$this->acquire($lock)) {
+            // Occupied by another worker for the whole retry window. Writing anyway would
+            // be the race this exists to prevent; the member is announced over the bus
+            // either way, so what is lost is one entry of the snapshot, not the event.
+            return;
+        }
 
+        try {
+            $this->apply($channel, $change);
+        } finally {
+            try {
+                $lock->release();
+            } catch (Throwable) {
+                // Releasing talks to the store too, and it can be down. Letting that
+                // escape would take the caller's teardown with it — see ConnectionHandler.
+            }
+        }
+    }
+
+    /**
+     * Takes the lock without stopping the worker.
+     *
+     * Lock::block() is not usable here: it waits in a native usleep loop, and one native
+     * sleep freezes the single PHP thread — every other connection of this worker stops
+     * being read, written or pinged for as long as it lasts. Sleeper yields the coroutine
+     * instead, so the wait costs this subscription and nothing else.
+     */
+    private function acquire(Lock $lock): bool
+    {
+        for ($attempt = 0; $attempt < self::LOCK_ATTEMPTS; $attempt++) {
+            try {
+                if ($lock->get()) {
+                    return true;
+                }
+            } catch (Throwable) {
+                // The store is unreachable; there is nothing to wait for.
+                return false;
+            }
+
+            Sleeper::usleep(self::LOCK_RETRY_MS * 1000);
+        }
+
+        return false;
+    }
+
+    /**
+     * @param callable(array<string, array<string, mixed>>): array<string, array<string, mixed>> $change
+     */
+    private function apply(string $channel, callable $change): void
+    {
+        try {
             $this->write($channel, $change($this->members($channel)));
         } catch (Throwable) {
-            // The lock could not be taken in time. Writing anyway would be the race this
-            // exists to prevent; the member is announced over the bus either way, so what
-            // is lost is one entry of the snapshot, not the event.
-        } finally {
-            $lock->release();
+            // Reading and writing both talk to the store. A member missing from the
+            // snapshot is bad; an exception out of here is worse — it unwinds the
+            // connection teardown that called it.
         }
     }
 
@@ -113,7 +167,7 @@ readonly class CachePresenceRepository implements PresenceRepositoryInterface
             return null;
         }
 
-        return $store->lock($this->key($channel) . ':lock', self::LOCK_TIMEOUT_SECONDS);
+        return $store->lock($this->key($channel) . ':lock', self::LOCK_TTL_SECONDS);
     }
 
     private function key(string $channel): string

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Console;
 
 use Illuminate\Console\Command;
+use SConcur\Laravel\Ws\WsGroupConfig;
 use SConcur\Laravel\Ws\WsOptions;
 use SConcur\Laravel\Ws\WsPresenceOptions;
 use SConcur\Laravel\Ws\WsServerRunner;
@@ -96,6 +97,9 @@ class WsStartCommand extends Command
         foreach (self::RUNTIME_OPTIONS as $name) {
             $value = $this->option($name);
 
+            // Unlike HttpStartCommand, an empty value is kept rather than skipped:
+            // `--path=` is how the master says "accept any path", and dropping it would
+            // silently put the server back on the library's default of `/`.
             if (!is_string($value)) {
                 continue;
             }
@@ -107,10 +111,8 @@ class WsStartCommand extends Command
     }
 
     /**
-     * The `server` block of the group this command is the worker script of, for a run with
-     * no master to forward it. The group is found by what it runs rather than by name, so
-     * renaming it in the config does not quietly leave a standalone server on library
-     * defaults.
+     * The `server` block of the group this command is the worker script of, for a run
+     * with no master to forward it.
      *
      * @return list<string>
      */
@@ -118,7 +120,7 @@ class WsStartCommand extends Command
     {
         $args = [];
 
-        foreach ($this->configuredGroup() as $key => $value) {
+        foreach (WsGroupConfig::server(self::NAME) as $key => $value) {
             $args[] = sprintf(
                 '--%s=%s',
                 $key,
@@ -136,7 +138,7 @@ class WsStartCommand extends Command
      */
     protected function warnAboutPresenceStore(WsOptions $options): void
     {
-        $workerCount = $this->configuredWorkerCount();
+        $workerCount = WsGroupConfig::workerCount(self::NAME);
 
         if ($workerCount <= 1) {
             return;
@@ -153,34 +155,5 @@ class WsStartCommand extends Command
                 $workerCount,
             ),
         );
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function configuredGroup(): array
-    {
-        foreach ((array) config('sconcur.master.groups', []) as $group) {
-            if (!is_array($group) || !in_array(self::NAME, (array) ($group['workerArgs'] ?? []), true)) {
-                continue;
-            }
-
-            return (array) ($group['server'] ?? []);
-        }
-
-        return [];
-    }
-
-    private function configuredWorkerCount(): int
-    {
-        foreach ((array) config('sconcur.master.groups', []) as $group) {
-            if (!is_array($group) || !in_array(self::NAME, (array) ($group['workerArgs'] ?? []), true)) {
-                continue;
-            }
-
-            return (int) ($group['workerCount'] ?? 1);
-        }
-
-        return 1;
     }
 }

@@ -12,6 +12,7 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\ServiceProvider;
+use RuntimeException;
 use SConcur\Laravel\Config\AsyncConfig;
 use SConcur\Laravel\Console\ExtensionLoadCommand;
 use SConcur\Laravel\Console\ExtensionStatusCommand;
@@ -55,10 +56,10 @@ use SConcur\Laravel\Ws\Presence\PresenceRepositoryInterface;
 use SConcur\Laravel\Ws\Protocol\MessageCodec;
 use SConcur\Laravel\Ws\SocketIdGenerator;
 use SConcur\Laravel\Ws\WsBusOptions;
+use SConcur\Laravel\Ws\WsGroupConfig;
 use SConcur\Laravel\Ws\WsLogger;
 use SConcur\Laravel\Ws\WsOptions;
 use SConcur\Laravel\Ws\WsPresenceOptions;
-use RuntimeException;
 
 /**
  * Laravel service provider for the SConcur integration.
@@ -250,7 +251,9 @@ class SConcurServiceProvider extends ServiceProvider
 
             return new AmqpBroadcastBus(
                 options: $bus,
-                logger: $logger->log(...),
+                logger: static function (string $line) use ($logger): void {
+                    $logger->log('bus', $line);
+                },
             );
         });
 
@@ -263,7 +266,9 @@ class SConcurServiceProvider extends ServiceProvider
             bus: $app->make(BroadcastBusInterface::class),
             registry: $app->make(ConnectionRegistry::class),
             codec: $app->make(MessageCodec::class),
-            logger: $app->make(WsLogger::class)->log(...),
+            logger: static function (string $line) use ($app): void {
+                $app->make(WsLogger::class)->log('bus', $line);
+            },
         ));
     }
 
@@ -293,7 +298,9 @@ class SConcurServiceProvider extends ServiceProvider
     {
         $options = $app->make(WsOptions::class)->presence;
 
-        if ($options->resolveStore($this->wsWorkerCount()) === WsPresenceOptions::STORE_MEMORY) {
+        $store = $options->resolveStore(WsGroupConfig::workerCount(WsStartCommand::NAME));
+
+        if ($store === WsPresenceOptions::STORE_MEMORY) {
             return new MemoryPresenceRepository();
         }
 
@@ -302,20 +309,6 @@ class SConcurServiceProvider extends ServiceProvider
             prefix: $options->cachePrefix,
             ttlSeconds: $options->ttlSeconds,
         );
-    }
-
-    /** The ws group's worker count, found by what the group runs rather than by its name. */
-    private function wsWorkerCount(): int
-    {
-        foreach ((array) config('sconcur.master.groups', []) as $group) {
-            if (!is_array($group) || !in_array(WsStartCommand::NAME, (array) ($group['workerArgs'] ?? []), true)) {
-                continue;
-            }
-
-            return (int) ($group['workerCount'] ?? 1);
-        }
-
-        return 1;
     }
 
     /**

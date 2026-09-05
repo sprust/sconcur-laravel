@@ -153,7 +153,7 @@ return [
                     // ignores the query string, so Echo's /app/{key}?protocol=7 matches and
                     // a wrong key is a 404 on the handshake, before PHP sees it. An empty
                     // string would accept any path and leave the check to the handler.
-                    'path'      => env('SCONCUR_WS_PATH', '/app/' . env('SCONCUR_WS_APP_KEY', '')),
+                    'path'      => env('SCONCUR_WS_PATH', rtrim(env('SCONCUR_WS_PATH_PREFIX', '/app'), '/') . '/' . env('SCONCUR_WS_APP_KEY', '')),
 
                     'handshakeTimeoutMs' => (int) env('SCONCUR_WS_HANDSHAKE_TIMEOUT_MS', 10000),
 

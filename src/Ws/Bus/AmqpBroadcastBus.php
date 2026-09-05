@@ -66,13 +66,15 @@ class AmqpBroadcastBus implements BroadcastBusInterface
 
     public function subscribe(Closure $handler, Closure $shouldContinue): void
     {
-        $connection = new Connection($this->subscriberOptions());
+        $connection = null;
 
         $queue = null;
 
         try {
             while ($shouldContinue()) {
                 try {
+                    $connection ??= new Connection($this->subscriberOptions());
+
                     $queue ??= $this->declareSubscriberQueue($connection->channel());
 
                     foreach ($queue->consume(autoAck: true) as $delivery) {
@@ -97,17 +99,24 @@ class AmqpBroadcastBus implements BroadcastBusInterface
                         continue;
                     }
 
-                    $this->log('sconcur ws bus: subscriber failed, reopening: ' . $exception->getMessage());
+                    $this->log('subscriber failed, reopening: ' . $exception->getMessage());
 
-                    // The channel dies with the failure, so the queue handle on it is gone
-                    // too; both are rebuilt on the next turn.
+                    // The connection goes too, not only the channel. One the library has
+                    // marked dead never comes back on its own — ensureOpen() throws for as
+                    // long as it still holds its handle, by design — so keeping it here
+                    // would spin on that exception for the life of the worker, and this
+                    // worker's clients would never see another broadcast.
+                    $this->closeQuietly($connection);
+
+                    $connection = null;
+
                     $queue = null;
 
                     Sleeper::usleep($this->options->reopenBackoffMs * 1000);
                 }
             }
         } finally {
-            $connection->close();
+            $this->closeQuietly($connection);
         }
     }
 
@@ -146,7 +155,7 @@ class AmqpBroadcastBus implements BroadcastBusInterface
 
         $queue->bind($this->options->exchange);
 
-        $this->log('sconcur ws bus: subscribed as ' . $queue->name() . ' on ' . $this->options->exchange);
+        $this->log('subscribed as ' . $queue->name() . ' on ' . $this->options->exchange);
 
         return $queue;
     }
@@ -157,28 +166,36 @@ class AmqpBroadcastBus implements BroadcastBusInterface
             return $this->publisherChannel;
         }
 
-        $this->publisherConnection = new Connection($this->connectionOptions());
+        // Built in locals and published to the object only once both have succeeded.
+        // Opening a channel and declaring an exchange are two suspension points, and a
+        // second coroutine entering that window used to overwrite the connection while the
+        // first still held the channel opened on it — leaving that channel owned by
+        // nobody, closed by the destructor, and every later publish failing on a handle
+        // this object still advertised.
+        $connection = new Connection($this->connectionOptions());
 
-        $channel = $this->publisherConnection->channel();
+        $channel = $connection->channel();
 
         // Declared by the publisher too: the exchange belongs to the package rather than
         // to the application, so there is no declare command to run first.
         $channel->exchange($this->options->exchange)->declare(type: ExchangeTypeEnum::Fanout);
+
+        $this->publisherConnection = $connection;
 
         return $this->publisherChannel = $channel;
     }
 
     private function closePublisher(): void
     {
-        try {
-            $this->publisherConnection?->close();
-        } catch (Throwable) {
-            // Already gone; there is nothing to close and nothing to report.
-        }
+        $connection = $this->publisherConnection;
 
+        // Dropped before the close, which suspends: a coroutine arriving in that window
+        // must build a connection of its own rather than take the one being torn down.
         $this->publisherChannel = null;
 
         $this->publisherConnection = null;
+
+        $this->closeQuietly($connection);
     }
 
     private function connectionOptions(): ConnectionOptions
@@ -218,10 +235,25 @@ class AmqpBroadcastBus implements BroadcastBusInterface
      * apart from a real ending in its message and nowhere else — there is no exception
      * class for it — so this is a substring test, kept in one place rather than spread
      * through the loop.
+     *
+     * Matched on the consumer's own wording rather than on the word "timeout": a command
+     * that outran the rpc deadline says "command timeout exceeded" and a wait says "wait
+     * timeout exceeded", and neither of those is idleness. Read as one, a real failure
+     * would go round the loop with no pause and with the dead handle still held.
      */
     private function isIdleTimeout(AmqpException $exception): bool
     {
-        return str_contains(strtolower($exception->getMessage()), 'timeout');
+        return str_contains(strtolower($exception->getMessage()), 'consumer timeout');
+    }
+
+    /** Hands a connection back where there is nothing useful to do about a failure. */
+    private function closeQuietly(?Connection $connection): void
+    {
+        try {
+            $connection?->close();
+        } catch (Throwable) {
+            // Already gone — a teardown is no place to fail.
+        }
     }
 
     private function log(string $line): void
