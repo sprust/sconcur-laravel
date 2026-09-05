@@ -923,6 +923,9 @@ window.Echo = new Echo({
 trait is what declares the `$socket` property the caller's socket id is written into.
 Without it `toOthers()` is silently a no-op.
 
+Verified against `laravel-echo` 2.4.0 and `pusher-js` 8.6.0: connecting, subscribing to a
+public channel, `join()` with its member list, and `listen()` on a broadcast event.
+
 ### What it does not do
 
 - No TLS and no `permessage-deflate`: nginx terminates the first, and the extension does

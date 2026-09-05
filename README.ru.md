@@ -929,6 +929,9 @@ window.Echo = new Echo({
 `Illuminate\Broadcasting\InteractsWithSockets`: этот трейт объявляет свойство `$socket`,
 в которое пишется socket id вызывающего. Без него `toOthers()` молча ничего не делает.
 
+Проверено против `laravel-echo` 2.4.0 и `pusher-js` 8.6.0: подключение, подписка на
+публичный канал, `join()` со списком участников и `listen()` на событие вещания.
+
 ### Чего он не делает
 
 - Ни TLS, ни `permessage-deflate`: первое терминирует nginx, второго расширение пока не
