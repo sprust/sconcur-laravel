@@ -43,6 +43,275 @@ flowchart TB
 Пул консьюмеров и пул задач публикуют в ту же шину тем же драйвером — на схеме опущены,
 чтобы не дублировать одну стрелку трижды.
 
+## Примеры
+
+Всё ниже проверено на демо-стенде этого репозитория против `laravel-echo` 2.4.0 и
+`pusher-js` 8.6.0.
+
+### Что включить в приложении
+
+```php
+// config/broadcasting.php
+'connections' => [
+    'sconcur' => ['driver' => 'sconcur'],
+],
+```
+
+```dotenv
+BROADCAST_CONNECTION=sconcur
+
+SCONCUR_WS_WORKER_COUNT=2
+SCONCUR_WS_APP_KEY=some-public-key
+SCONCUR_WS_APP_SECRET=some-private-secret
+```
+
+Ключ и секрет больше нигде не дублируются: драйвер вещания, обработчик соединения и
+путь группы читают их из `config('sconcur.ws')`.
+
+```js
+// resources/js/echo.js — ничего своего, обычный pusher-клиент
+window.Echo = new Echo({
+    broadcaster: 'pusher',
+    key: import.meta.env.VITE_SCONCUR_WS_KEY,
+    wsHost: window.location.hostname,
+    wsPort: 80,
+    forceTLS: false,
+    disableStats: true,
+    enabledTransports: ['ws', 'wss'],
+    cluster: '',
+});
+```
+
+### Публичный канал
+
+```php
+namespace App\Events;
+
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Foundation\Events\Dispatchable;
+
+class OrderShipped implements ShouldBroadcast
+{
+    use Dispatchable;
+
+    public function __construct(public readonly int $orderId)
+    {
+    }
+
+    /**
+     * @return list<Channel>
+     */
+    public function broadcastOn(): array
+    {
+        return [new Channel('orders')];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'order.shipped';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function broadcastWith(): array
+    {
+        return ['id' => $this->orderId];
+    }
+}
+```
+
+```php
+OrderShipped::dispatch($order->id);
+```
+
+```js
+Echo.channel('orders').listen('.order.shipped', (payload) => console.log(payload.id));
+```
+
+Точка перед именем обязательна, когда событие объявляет `broadcastAs()`: без неё Echo
+подставит свой namespace `App.Events`. Это правило Echo, а не пула.
+
+`ShouldBroadcast` отправляет через очередь, `ShouldBroadcastNow` — сразу в том же
+процессе. Для пула разницы нет: в обоих случаях публикует один и тот же драйвер.
+
+### Приватный канал
+
+```php
+// routes/channels.php
+Broadcast::channel('orders.{orderId}', function (User $user, int $orderId): bool {
+    return Order::whereKey($orderId)->whereBelongsTo($user)->exists();
+});
+```
+
+```php
+public function broadcastOn(): array
+{
+    return [new PrivateChannel('orders.' . $this->orderId)];
+}
+```
+
+```js
+Echo.private(`orders.${orderId}`).listen('.order.shipped', (payload) => { /* … */ });
+```
+
+Echo сам сходит на `/broadcasting/auth` вашего приложения, там отработают колбэки
+`routes/channels.php`, и в ответ уйдёт подпись. Ws-воркер только проверит её — ни базы,
+ни сессии на его стороне нет.
+
+### Presence-канал
+
+```php
+// routes/channels.php — возвращаем данные участника, а не bool
+Broadcast::channel('room.{roomId}', function (User $user, int $roomId): ?array {
+    return $user->canJoin($roomId)
+        ? ['id' => $user->id, 'name' => $user->name]
+        : null;
+});
+```
+
+```php
+public function broadcastOn(): array
+{
+    return [new PresenceChannel('room.' . $this->roomId)];
+}
+```
+
+```js
+Echo.join(`room.${roomId}`)
+    .here((members) => console.log('уже здесь:', members))
+    .joining((member) => console.log('пришёл:', member.name))
+    .leaving((member) => console.log('ушёл:', member.name))
+    .listen('.message.posted', (payload) => { /* … */ });
+```
+
+`here()` приходит внутри ответа на подписку и потому содержит весь список сразу — при
+нескольких воркерах он собирается из общего хранилища, см. «Presence-каналы».
+
+Один человек с двумя вкладками — один участник: `joining()` на вторую вкладку не
+придёт, `leaving()` — только когда закроется последняя.
+
+### Не отправлять инициатору
+
+```php
+use Illuminate\Broadcasting\InteractsWithSockets;
+
+class OrderShipped implements ShouldBroadcast
+{
+    use Dispatchable;
+    use InteractsWithSockets;
+```
+
+```php
+broadcast(new OrderShipped($order->id))->toOthers();
+```
+
+Без трейта `InteractsWithSockets` вызов `toOthers()` не делает ничего и не жалуется:
+socket id писать некуда, и в сообщение он не попадёт.
+
+Echo проставляет заголовок `X-Socket-ID` сам — но только тем клиентам, в которые
+встраивается: axios, jQuery, Vue Resource, Turbo. Если запрос уходит через `fetch`,
+заголовок нужно поставить руками:
+
+```js
+fetch('/api/orders/42/ship', {
+    method: 'POST',
+    headers: {'X-Socket-ID': Echo.socketId()},
+});
+```
+
+### Клиентские события
+
+Один подписчик говорит другим, минуя приложение. Выключены по умолчанию, как и у Pusher:
+
+```dotenv
+SCONCUR_WS_CLIENT_EVENTS=true
+SCONCUR_WS_CLIENT_EVENTS_PER_MINUTE=60
+```
+
+```js
+Echo.private(`orders.${orderId}`)
+    .listenForWhisper('typing', (payload) => console.log(payload.name, 'печатает'))
+    .whisper('typing', {name: 'Ann'});
+```
+
+Работает только на `private-` и `presence-` каналах, и только для тех, кто на канал
+подписан. Автору событие не возвращается. Ограничение частоты считается на соединение:
+исчерпав его, клиент молча перестаёт быть слышен до следующей минуты.
+
+### Вещание не только из HTTP
+
+Драйвер один и тот же, откуда бы его ни позвали — важно лишь то, что публикует он в
+шину, а не в память процесса:
+
+```php
+class NotifyShipment implements ShouldQueue
+{
+    public function handle(): void
+    {
+        broadcast(new OrderShipped($this->orderId));
+    }
+}
+```
+
+```php
+class ReportTask implements TaskInterface
+{
+    public function tick(): TickResultEnum
+    {
+        broadcast(new StatsUpdated($this->collect()));
+
+        return TickResultEnum::Worked;
+    }
+}
+```
+
+### События самого пула
+
+Пул поднимает обычные события Laravel — по ним удобно считать подключения или писать
+журнал:
+
+```php
+use SConcur\Laravel\Ws\Events\ChannelSubscribed;
+use SConcur\Laravel\Ws\Events\ClientEventReceived;
+use SConcur\Laravel\Ws\Events\ConnectionClosed;
+use SConcur\Laravel\Ws\Events\ConnectionOpened;
+
+Event::listen(ConnectionOpened::class, function (ConnectionOpened $event): void {
+    Log::info('ws opened', ['socket' => $event->socketId, 'from' => $event->remoteAddr]);
+});
+```
+
+Слушатель выполняется в ws-воркере, в корутине этого соединения. Всё, что он делает
+блокирующе, останавливает весь воркер — писать в базу оттуда синхронным драйвером не
+стоит.
+
+### Если ничего не приходит
+
+По порядку, сверху вниз:
+
+1. `sconcur:servers:master:status` показывает группу `ws`? Меньше одного воркера —
+   группы в конфиге нет вовсе.
+2. `sconcur:extension:status` — версия расширения совпадает с версией пакета?
+3. Клиент вообще подключился? Чужой ключ в пути даёт `404` на рукопожатии, и до PHP
+   дело не доходит: сравните `SCONCUR_WS_APP_KEY` с тем, что в `key` у Echo.
+4. nginx пропускает Upgrade на этом пути? Нужен отдельный `location` с
+   `proxy_set_header Upgrade` и большим `proxy_read_timeout` — блок с обычными
+   таймаутами рвёт соединение раз в минуту.
+5. Подписка прошла? На отказ приходит `pusher:subscription_error`, и Echo отдаёт его в
+   `.error()`. Чаще всего это несошедшаяся подпись — секрет в http-воркере и в
+   ws-воркере должен быть один.
+6. Событие ушло в шину? Обмен `sconcur.ws` виден в панели RabbitMQ, а привязанных к
+   нему очередей — по одной на каждый ws-воркер, у которого есть хотя бы одно
+   соединение. У простаивающего воркера очереди нет: подписчик уходит вместе с
+   последним клиентом.
+7. Первое событие сразу после первого подключения может не дойти. Подписчик шины
+   поднимается вместе с первым соединением, и пока он не привязал свою очередь, fanout
+   выбрасывает сообщение — адресатов у обмена ещё нет. Окно — десятки миллисекунд, и
+   касается только воркера, который до этого простаивал.
+8. Дошло всем, кроме отправителя? Так и задумано, если вызывали `toOthers()`.
+
 ## Протокол
 
 Совместимое подмножество Pusher v7. Благодаря этому `laravel-echo` работает без своего
@@ -237,5 +506,8 @@ graceful stop превратится в ожидание до `shutdownTimeoutMs
 - HTTP-API Pusher (`/apps/{id}/events`), вебхуки, статистика — нет: их место заняла шина.
 - Шифрованные каналы — нет, отвечаем явным отказом.
 - Истории событий нет: переподключившийся клиент не получает пропущенное.
+- Событие, отправленное в первые десятки миллисекунд после первого подключения к
+  простаивавшему воркеру, может до него не дойти: подписчик шины поднимается вместе с
+  этим соединением, а fanout выбрасывает сообщение, пока его очередь не привязана.
 - `sconcur:servers:master:reload` рвёт ws-соединения. Для http-пула reload незаметен,
   здесь — заметен; Echo переподключается сам.

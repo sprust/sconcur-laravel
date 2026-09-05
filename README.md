@@ -926,6 +926,11 @@ Without it `toOthers()` is silently a no-op.
 Verified against `laravel-echo` 2.4.0 and `pusher-js` 8.6.0: connecting, subscribing to a
 public channel, `join()` with its member list, and `listen()` on a broadcast event.
 
+Worked examples of all of it — public, private and presence channels, `toOthers()`,
+client events, broadcasting from a job or a task, the pool's own events, and what to
+check when nothing arrives — are in
+[docs/websocket.ru.md](docs/websocket.ru.md#примеры) (in Russian).
+
 ### What it does not do
 
 - No TLS and no `permessage-deflate`: nginx terminates the first, and the extension does
