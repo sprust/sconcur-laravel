@@ -18,7 +18,7 @@ endif
 # Everything from a fresh clone to a working demo. The order is not arbitrary: the
 # image bakes sconcur.so by the version in composer.lock, so the lock has to be there
 # before `build`; the queues are declared before the consumer pool starts, or the pool
-# spins on a 404 instead of reading (see README, "Объявление очередей обязательно").
+# spins on a 404 instead of reading (see docs/queue.md).
 #
 # The .env is created only when there is none — `make env-copy` is the deliberate,
 # interactive way to overwrite one, and running it here would make every re-setup stop
@@ -147,6 +147,12 @@ tasks-restart:
 
 ext-status:
 	make demo-art c='sconcur:extension:status'
+
+# Walks the demo's ws path from outside — handshake, ping, subscribe, publish, delivery —
+# and answers with an exit code, so the pool can be checked without a browser. From the
+# workers container, because the ws client is in the extension. `c` is the burst size.
+ws-check:
+	$(WORKERS_CLI) php demo/bin/ws-check.php ${c}
 
 test:
 	$(PHP_CLI) ./vendor/bin/phpunit \

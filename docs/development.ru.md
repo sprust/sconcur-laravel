@@ -42,6 +42,7 @@ make queues-declare                   # объявить очереди, кот�
 make sconcur-status                   # статус мастера: группы и воркеры
 make sconcur-reload                   # rolling restart пулов, мастер остаётся жив
 make tasks-stop / make tasks-restart  # управление пулом задач из другого контейнера
+make ws-check c=50                    # ws-пул от начала до конца, с кодом возврата
 make check                            # cs-fixer, phpstan, тесты
 make test c=--filter=DsnTest          # один тест
 ```

@@ -421,6 +421,11 @@ Top to bottom:
    milliseconds and concerns only a worker that was idle before.
 8. Everyone got it except the sender? That is what `toOthers()` is for.
 
+This repository's demo walks all of it from one script — handshake, ping, subscribe,
+publish, delivery — and reports each step with an exit code, so the same path can be
+checked without a browser: `make ws-check` and
+[demo/README.md](../demo/README.md#checking-the-pool-without-a-browser).
+
 ## The protocol
 
 A compatible subset of Pusher v7. That is what lets `laravel-echo` work with no client of

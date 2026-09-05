@@ -108,6 +108,51 @@ nothing arrives, which is the point.
 Only the public `demo` channel is used here. Private and presence channels are authorized
 through `/broadcasting/auth` against an authenticated user, and the demo has no users.
 
+## Checking the pool without a browser
+
+The page is the usual way to look at the pool, but it says nothing an exit code can be
+read from. `demo/bin/ws-check.php` walks the same path from the outside and reports every
+step:
+
+```bash
+make ws-check          # a burst of five
+make ws-check c=50     # the largest burst the panel can send
+```
+
+```
+ws check against scl-nginx:80, channel demo, burst of 50
+
+  ok  handshake                         socket_id=27.19
+  ok  the socket id names a worker      ws worker pid=27
+  ok  ping
+  ok  subscribe
+  ok  publish over http                 http worker pid=25
+  ok  the whole burst arrives           50 of 50, no duplicates
+
+all checks passed
+```
+
+What each line stands for:
+
+| Step | What it proves |
+|---|---|
+| handshake | nginx passes the upgrade through and the ws pool answers `pusher:connection_established` |
+| the socket id names a worker | the id is the worker's pid and a counter, so it says which ws worker took this connection |
+| ping | the connection is alive in both directions, not merely open |
+| subscribe | the channel was accepted — for a public channel, without going near `/broadcasting/auth` |
+| publish over http | the http worker accepted the burst; its pid differs from the ws worker's, which is the gap the bus crosses |
+| the whole burst arrives | every message came back, numbered from one, with nothing missing and nothing twice |
+
+It runs from the workers container, where the extension with the ws client lives, and it
+exits non-zero on the first failure. A refused upgrade is reported as a failed handshake
+with the reason on the line rather than as a stack trace — a wrong `SCONCUR_WS_APP_KEY`,
+for instance, gives `Invalid status code: 404`, because the path carries the key and a
+path that does not match is refused before PHP sees it.
+
+`make sconcur-status` and `make ext-status` answer the two questions that come before all
+of this: whether the `ws` group is up at all, and whether the loaded extension matches the
+package.
+
 ## Changing the pool sizes
 
 The **Pool sizes** panel writes the numbers to `demo/storage/app/scaling.json`, which

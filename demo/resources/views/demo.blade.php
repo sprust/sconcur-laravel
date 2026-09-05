@@ -433,17 +433,23 @@
 
     // The ws client, written against the wire protocol rather than through laravel-echo:
     // the demo has no bundler, and the frames are the same ones Echo sends. A real
-    // application uses Echo — the README shows the four lines of config it needs.
+    // application uses Echo — docs/websocket.md shows the config it needs.
     const ws = {
         socket: null,
         socketId: null,
         log: [],
     };
 
+    // The largest burst the panel can send is 50 messages, and the whole of it has to stay
+    // readable: below that the answers to one press push each other out and the numbering
+    // reads as if messages were lost. The extra lines are the publish confirmation and the
+    // handshake around it.
+    const WS_LOG_LINES = 60;
+
     const wsLog = (line) => {
         ws.log.unshift(new Date().toLocaleTimeString() + '  ' + line);
 
-        ws.log = ws.log.slice(0, 12);
+        ws.log = ws.log.slice(0, WS_LOG_LINES);
 
         $('out-ws').textContent = ws.log.join('\n');
     };

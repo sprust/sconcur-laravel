@@ -4,5 +4,6 @@ parameters:
         - ./tests
         - ./workbench
         - ./demo/app
+        - ./demo/bin
 
     level: 8
