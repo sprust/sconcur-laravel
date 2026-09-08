@@ -131,6 +131,19 @@ src/Ws/Broadcasting/            — SConcurBroadcaster, the `sconcur` broadcast 
 
 Points worth knowing before changing anything:
 
+- **The dispatcher and the router are installed by `AsyncApplication`, not by the
+  provider.** Both of Laravel's kernels are built before any provider registers and each
+  keeps what it was handed — `Foundation\Console\Kernel` the dispatcher it later builds
+  `Illuminate\Console\Application` from and dispatches `CommandStarting` /
+  `CommandFinished` / `Terminating` into, `Foundation\Http\Kernel` the router. A swap
+  from `register()` never reaches the object serving the current command or request, and
+  for the console kernel nothing can be done about it afterwards: it is inside its own
+  `handle()`. So `registerBaseServiceProviders()` binds them, and the provider does not.
+  An application on the stock `Illuminate\Foundation\Application` gets neither, which is
+  right for it — no `AsyncApplication`, no coroutines to be safe from. The dispatcher also
+  carries the queue and transaction-manager resolvers the stock
+  `Illuminate\Events\EventServiceProvider` binding is given — dropping them breaks
+  `ShouldQueue` listeners and `afterCommit` events.
 - **The config is published, not merged.** `config/sconcur.php` is a skeleton; the
   application owns every value including the defaults. Merging would let a deleted key
   quietly come back. Commands say so rather than running on an empty array.
@@ -174,19 +187,20 @@ Points worth knowing before changing anything:
 ## Tests
 
 - `tests/Feature/` — PHPUnit feature tests, `orchestra/testbench` based
-- `workbench/` — the testbench application the tests run against (models, jobs, tasks,
-  routes, config). It is **not** the demo; see below.
+- `workbench/` — the testbench application the tests run against (bootstrap, tasks,
+  listeners, routes, config). It is **not** the demo; see below.
 - `demo/` — the demo application, a minimal Laravel skeleton the master serves. Not
   used by tests.
 
 Namespaces: `SConcur\Laravel\Tests\` → `tests/`, `Workbench\App\` → `workbench/app/`,
 `Demo\App\` → `demo/app/`.
 
-The demo is not a workbench because testbench builds
-`Illuminate\Foundation\Application` itself, and the only hook to replace it
-(`workbench/bootstrap/app.php`) is read on the test-case path only, not on the
-`vendor/bin/testbench` path. The demo needs `AsyncApplication`, so it carries its own
-`bootstrap/app.php`.
+Both carry a `bootstrap/app.php` returning an `AsyncApplication`, which is what makes
+the tests run on the application class the package actually ships — testbench requires
+`workbench/bootstrap/app.php` instead of building `Illuminate\Foundation\Application`
+itself. The demo stays a separate application rather than becoming the workbench because
+it is a real skeleton the master serves: `public/`, `artisan`, routes and views of its
+own.
 
 ## Code style
 

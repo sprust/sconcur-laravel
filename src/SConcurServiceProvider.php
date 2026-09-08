@@ -5,11 +5,9 @@ declare(strict_types=1);
 namespace SConcur\Laravel;
 
 use Illuminate\Broadcasting\BroadcastManager;
-use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Container\Container;
-use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
@@ -23,7 +21,6 @@ use SConcur\Laravel\Console\MasterReloadCommand;
 use SConcur\Laravel\Console\MasterStartCommand;
 use SConcur\Laravel\Console\MasterStatusCommand;
 use SConcur\Laravel\Console\MasterStopCommand;
-use SConcur\Laravel\Events\AsyncDispatcher;
 use SConcur\Laravel\Console\RabbitmqConsumerStartCommand;
 use SConcur\Laravel\Console\RabbitmqDeclareCommand;
 use SConcur\Laravel\Console\TasksRestartCommand;
@@ -34,7 +31,6 @@ use SConcur\Laravel\Database\CoroutineTransactionsManager;
 use SConcur\Laravel\Database\Mysql\Connection as SconcurMysqlConnection;
 use SConcur\Laravel\Database\Mysql\Connector as SconcurMysqlConnector;
 use SConcur\Laravel\Queue\Rabbitmq\Connector;
-use SConcur\Laravel\Routing\AsyncRouter;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
 use SConcur\Laravel\Tasks\CooperativeSleeper;
 use SConcur\Laravel\Tasks\TaskPoolLogger;
@@ -354,8 +350,13 @@ class SConcurServiceProvider extends ServiceProvider
     }
 
     /**
-     * Swaps config, events, router, translator and view for their coroutine-safe
-     * adapters. Always, without asking what kind of process this is.
+     * Swaps config, translator and view for their coroutine-safe adapters. Always, without
+     * asking what kind of process this is.
+     *
+     * The dispatcher and the router are not here: AsyncApplication installs them in its own
+     * constructor, because both of Laravel's kernels are built before any provider registers
+     * and each keeps what it was handed. See AsyncApplication::registerBaseServiceProviders().
+     * The boot callback below still flips them into per-coroutine mode along with the rest.
      *
      * There used to be a check on argv here, and it was wrong: once the master began
      * forwarding a group's server block to its workers, the command name stopped being
@@ -377,8 +378,6 @@ class SConcurServiceProvider extends ServiceProvider
     private function registerAsyncAdapters(): void
     {
         $this->registerConfigAdapter();
-        $this->registerEventDispatcherAdapter();
-        $this->registerRouterAdapter();
         $this->registerTranslatorAdapter();
         $this->registerViewAdapter();
 
@@ -408,25 +407,6 @@ class SConcurServiceProvider extends ServiceProvider
         $original = $this->app->make('config');
 
         $this->app->instance('config', new AsyncConfig($original->all()));
-    }
-
-    private function registerEventDispatcherAdapter(): void
-    {
-        $this->app->singleton('events', fn($app) => new AsyncDispatcher($app));
-    }
-
-    private function registerRouterAdapter(): void
-    {
-        $this->app->singleton('router', fn($app) => new AsyncRouter($app['events'], $app));
-
-        // A kernel resolved against the old router must be rebuilt with the new one.
-        // forgetInstance() belongs to the container, not to the Application contract the
-        // provider's $app is typed as — hence the check rather than an assertion.
-        $app = $this->app;
-
-        if ($app instanceof IlluminateContainer && $app->resolved(Kernel::class)) {
-            $app->forgetInstance(Kernel::class);
-        }
     }
 
     private function registerTranslatorAdapter(): void

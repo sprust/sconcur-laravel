@@ -6,10 +6,13 @@ namespace SConcur\Laravel\Foundation;
 
 use Closure;
 use Fiber;
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 use SConcur\Context\Context;
+use SConcur\Laravel\Events\AsyncDispatcher;
+use SConcur\Laravel\Routing\AsyncRouter;
 
 /**
  * Coroutine-scoped application: a single shared container whose request-scoped
@@ -109,6 +112,36 @@ class AsyncApplication extends Application
     }
 
     /**
+     * The two coroutine-safe services that cannot wait for SConcurServiceProvider.
+     *
+     * Both of Laravel's kernels are built before a single provider registers — the console
+     * one by handleCommand(), the HTTP one by handleRequest() — and each keeps what it was
+     * handed. The console kernel keeps the dispatcher: it is the one
+     * Illuminate\Console\Application is later built from, and the one ArtisanStarting,
+     * CommandStarting, CommandFinished and Terminating are dispatched into. The HTTP kernel
+     * keeps the router. A swap from a provider's register() never reaches the object
+     * serving the command or request that registered it, and for the console kernel nothing
+     * can be done afterwards at all — it is inside its own handle() by then.
+     *
+     * Here there is nothing yet to capture them. The other three adapters stay with the
+     * provider: config, translator and view do not exist until the bootstrappers and the
+     * providers they belong to have run, and nothing captures them this early.
+     *
+     * An application on the stock Illuminate\Foundation\Application gets neither, which is
+     * the right answer for it: without this container there are no coroutines to be safe
+     * from, and the stock dispatcher and router are what a single-caller process wants.
+     *
+     * Both bindings are lazy — nothing is resolved while the container is being built.
+     */
+    protected function registerBaseServiceProviders(): void
+    {
+        parent::registerBaseServiceProviders();
+
+        $this->registerEventDispatcher();
+        $this->registerRouter();
+    }
+
+    /**
      * A callable $abstract has no alias and cannot be scoped, so it goes straight to the
      * parent — the container accepts one, and asking getAlias() for its name would be a
      * type error rather than a miss.
@@ -130,6 +163,38 @@ class AsyncApplication extends Application
         }
 
         return parent::resolve($abstract, $parameters, $raiseEvents);
+    }
+
+    private function registerEventDispatcher(): void
+    {
+        // The two resolvers are what Illuminate\Events\EventServiceProvider gives the stock
+        // dispatcher, and neither is optional: without the queue one a ShouldQueue listener
+        // resolves null and fails, without the transaction one an event marked afterCommit
+        // is dispatched straight away instead of after the commit.
+        $this->singleton(
+            'events',
+            static fn(Container $container): AsyncDispatcher => (new AsyncDispatcher($container))
+                // 'queue' rather than the Factory contract, and mixed rather than the
+                // factory: Dispatcher::setQueueResolver() is annotated callable(): Queue,
+                // while what resolveQueue() then calls connection() on is the factory.
+                ->setQueueResolver(static fn(): mixed => $container->make('queue'))
+                ->setTransactionManagerResolver(
+                    static fn(): mixed => $container->bound('db.transactions')
+                        ? $container->make('db.transactions')
+                        : null,
+                ),
+        );
+    }
+
+    private function registerRouter(): void
+    {
+        $this->singleton(
+            'router',
+            static fn(Container $container): AsyncRouter => new AsyncRouter(
+                events: $container->make('events'),
+                container: $container,
+            ),
+        );
     }
 
     private function resolveRequest(): object

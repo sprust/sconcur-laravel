@@ -30,6 +30,11 @@ use SConcur\Laravel\Ws\Presence\PresenceRepositoryInterface;
  */
 class ServiceProviderTest extends BaseTestCase
 {
+    /**
+     * All five of them, whoever bound them: config, translator and view come from the
+     * provider, the dispatcher and the router from AsyncApplication's own constructor —
+     * the kernels are built before any provider registers and keep what they were handed.
+     */
     #[Test]
     public function itSwapsEveryAdapterIn(): void
     {

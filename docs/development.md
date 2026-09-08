@@ -53,9 +53,11 @@ to the live MySQL and RabbitMQ.
 
 ## The tests and the demo are different applications
 
-`workbench/` lives under `orchestra/testbench` and belongs to the tests. `demo/` is a
-separate minimal application with a `bootstrap/app.php` of its own, because it needs
-`AsyncApplication` while testbench builds `Illuminate\Foundation\Application` itself.
+`workbench/` lives under `orchestra/testbench` and belongs to the tests. Both it and
+`demo/` carry a `bootstrap/app.php` returning an `AsyncApplication` — testbench requires
+the workbench one rather than building an application itself, so the tests run on the same
+class an application does. `demo/` stays separate because it is a real skeleton the master
+serves, with `public/`, `artisan`, routes and views of its own.
 Nothing is installed there: `demo/vendor` is a symlink to the root `vendor` and its classes
 are autoloaded through the root's `autoload-dev` (`Demo\App\` → `demo/app/`). One install,
 one lock, and the package and the application demonstrating it cannot drift apart.

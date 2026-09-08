@@ -121,6 +121,13 @@ not `Illuminate\Foundation\Application`. Without it `request`, `session`, `auth`
 `cookie` stay process-wide singletons, and two requests running as coroutines in one
 process read each other's state.
 
+It is also what installs two of the adapters. Laravel builds both of its kernels before a
+single service provider registers, and each keeps what it was handed — the console kernel
+the event dispatcher, the HTTP kernel the router — so a provider is too late to give them
+anything. `AsyncApplication` binds the coroutine-safe pair in its own constructor instead:
+the console kernel is then built on the dispatcher the application listens on, and
+`CommandStarting`, `CommandFinished` and `Terminating` reach their listeners.
+
 ```php
 <?php
 

@@ -18,7 +18,8 @@ src/Tasks/Control/             — канал управления через к
 src/Http/                      — HttpServerRunner + LaravelHttpHandler (build + serve)
 src/Ws/                        — WebSocket-пул (WsServerRunner, ConnectionHandler,
                                  ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
-src/Foundation/                — AsyncApplication, ScopedService, ScopedServiceProxy
+src/Foundation/                — AsyncApplication (сам биндит диспетчер и роутер, до появления
+                                 обоих ядер), ScopedService, ScopedServiceProxy
 src/Config/                    — AsyncConfig (overlay config()->set per-coroutine)
 src/Events/                    — AsyncDispatcher (defer() per-coroutine)
 src/Routing/                   — AsyncRouter (current route/request per-coroutine)

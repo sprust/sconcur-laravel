@@ -18,7 +18,8 @@ src/Tasks/Control/             — the control channel through the cache (stop/r
 src/Http/                      — HttpServerRunner + LaravelHttpHandler (build + serve)
 src/Ws/                        — the WebSocket pool (WsServerRunner, ConnectionHandler,
                                  ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
-src/Foundation/                — AsyncApplication, ScopedService, ScopedServiceProxy
+src/Foundation/                — AsyncApplication (it binds the dispatcher and the router itself,
+                                 before either kernel exists), ScopedService, ScopedServiceProxy
 src/Config/                    — AsyncConfig (a per-coroutine config()->set overlay)
 src/Events/                    — AsyncDispatcher (per-coroutine defer())
 src/Routing/                   — AsyncRouter (per-coroutine current route/request)
