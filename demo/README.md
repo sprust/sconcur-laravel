@@ -32,6 +32,7 @@ flowchart TB
     ws["group ws — 1 worker"]
     mysql["MySQL"]
     broker["RabbitMQ"]
+    redis["Redis"]
 
     browser -->|"HTTP"| nginx
     browser <-->|"WebSocket upgrade and frames"| nginx
@@ -48,6 +49,7 @@ flowchart TB
     rabbit -->|"job_results"| mysql
     tasks -->|"heartbeats"| mysql
     ws -->|"one exclusive queue per worker"| broker
+    tasks -->|"control channel, cache over sconcur_redis"| redis
 ```
 
 All four groups are pools of one master, configured in `demo/config/sconcur.php`.
@@ -55,11 +57,11 @@ The master's telemetry panel is what the page's top section reads.
 
 ## State after a restart
 
-MySQL and RabbitMQ keep their data in tmpfs, so stopping either container leaves the
-schema and the queue gone. The workers container migrates and declares from its
-entrypoint before starting the master, so a restart repairs itself — both commands are
-idempotent, and a failure there is reported without keeping the container down. To do it
-by hand: `make demo-reset`.
+MySQL, RabbitMQ and Redis keep their data in tmpfs, so stopping MySQL or RabbitMQ leaves
+the schema and the queue gone, and stopping Redis empties the cache. The workers container
+migrates and declares from its entrypoint before starting the master, so a restart repairs
+itself — both commands are idempotent, and a failure there is reported without keeping the
+container down. To do it by hand: `make demo-reset`.
 
 ## Endpoints
 

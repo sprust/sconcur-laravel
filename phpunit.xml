@@ -25,5 +25,12 @@
 
         <env name="SCONCUR_RABBITMQ_DSN" value="amqp://scl_user:_scl_password_567@scl-rabbitmq:5672/%2f"/>
         <env name="SCONCUR_RABBITMQ_QUEUE" value="tests"/>
+
+        <!-- Databases of their own, apart from the demo's 0 and 1: the cache tests flush. -->
+        <env name="REDIS_HOST" value="scl-redis"/>
+        <env name="REDIS_PORT" value="6379"/>
+        <env name="REDIS_PASSWORD" value="_scl_password_567"/>
+        <env name="REDIS_DB" value="8"/>
+        <env name="REDIS_CACHE_DB" value="9"/>
     </php>
 </phpunit>

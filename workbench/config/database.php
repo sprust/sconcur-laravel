@@ -43,4 +43,26 @@ return [
             'strict'    => true,
         ],
     ],
+
+    // The live Redis the compose file raises; databases 8 and 9 (phpunit.xml), apart from
+    // the demo's, because the cache tests flush.
+    'redis' => [
+        'client' => env('REDIS_CLIENT', 'sconcur'),
+
+        'default' => [
+            'host'       => env('REDIS_HOST', '127.0.0.1'),
+            'port'       => env('REDIS_PORT', '6379'),
+            'password'   => env('REDIS_PASSWORD'),
+            'database'   => env('REDIS_DB', '8'),
+            'timeout_ms' => 5000,
+        ],
+
+        'cache' => [
+            'host'       => env('REDIS_HOST', '127.0.0.1'),
+            'port'       => env('REDIS_PORT', '6379'),
+            'password'   => env('REDIS_PASSWORD'),
+            'database'   => env('REDIS_CACHE_DB', '9'),
+            'timeout_ms' => 5000,
+        ],
+    ],
 ];

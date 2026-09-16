@@ -21,6 +21,7 @@ make setup
 | `scl-workers` | supervisor, под ним мастер SConcur с группами `http`, `rabbitmq`, `ws` и `tasks` |
 | `scl-mysql` | MySQL 8.4, данные в `tmpfs` — стираются при пересоздании контейнера |
 | `scl-rabbitmq` | RabbitMQ 4.1 с панелью, тоже в `tmpfs` |
+| `scl-redis` | Redis 8.2 с паролем, тоже в `tmpfs`; кэш-стор демо и `Redis::` |
 
 Расширение `sconcur.so` вшито в образ: `docker/php/Dockerfile` читает версию
 `sconcur/sconcur` из `composer.lock` и качает соответствующий ассет релиза. Поэтому
@@ -48,7 +49,7 @@ make test c=--filter=DsnTest          # один тест
 ```
 
 Тестам нужно поднятое окружение: они грузят `sconcur.so`, а интеграционные ходят в
-живые MySQL и RabbitMQ.
+живые MySQL, RabbitMQ и Redis.
 
 ## Тесты и демо — разные приложения
 

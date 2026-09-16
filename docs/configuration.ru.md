@@ -18,6 +18,7 @@
 - [WebSocket-сервер](#websocket-сервер)
 - [Протокол WebSocket](#протокол-websocket)
 - [Пул задач](#пул-задач)
+- [Redis](#redis)
 
 ## Общие
 
@@ -198,3 +199,9 @@
 Группа пула — один воркер и `restartPolicy: on-failure` вместо унаследованного от мастера
 `always`, чтобы `sconcur:tasks:stop`, который выходит с нулём, не отменялся заменой через
 секунду.
+
+## Redis
+
+Своих переменных окружения у клиента `sconcur` и кэш-стора `sconcur_redis` нет. Их
+настройки — ключи секции `redis` в `config/database.php` и `cache.stores.sconcur_redis`, а
+приложение заполняет их из любых переменных; ключи перечислены в [redis.ru.md](redis.ru.md).
