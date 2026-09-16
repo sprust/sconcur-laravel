@@ -11,6 +11,8 @@ use Illuminate\Redis\Events\CommandFailed;
 use SConcur\Features\Redis\Connection as RedisClient;
 use SConcur\Features\Redis\Dto\Message;
 use SConcur\Laravel\Redis\Exceptions\UnsupportedRedisCallException;
+use SConcur\Laravel\Redis\Limiters\ConcurrencyLimiterBuilder;
+use SConcur\Laravel\Redis\Limiters\DurationLimiterBuilder;
 use Throwable;
 
 /**
@@ -22,6 +24,10 @@ use Throwable;
  * spelling Laravel's own consumers use — RedisLock, the concurrency and duration limiters —
  * so they work unchanged. The reply is what the server sent, in RESP2 terms: `OK` as a
  * string, integers as `int`, a nil as `null`, an array as a list.
+ *
+ * A blocking command (`BLPOP`, `XREAD … BLOCK`, …) gets the deadline its wait needs rather
+ * than the connection's flat one, which the extension would refuse as shorter than the wait.
+ * The limiters of `funnel()` and `throttle()` pause between attempts without freezing the worker.
  *
  * The typed API of the feature (`hGetAll()` folding the reply into a map, `scan()` as an
  * iterator, `blPop()` with its deadline worked out) is `Redis::connection()->client()`.
@@ -57,12 +63,21 @@ class Connection extends BaseConnection
     {
         UnsupportedCalls::assertSupported($method);
 
+        $arguments = CommandArguments::flatten(
+            command: $method,
+            parameters: $parameters,
+        );
+
         $startedAt = microtime(true);
 
         try {
             $result = $this->redisClient->command(
                 name: strtoupper($method),
-                arguments: CommandArguments::flatten($parameters),
+                arguments: $arguments,
+                timeoutMs: $this->deadlineMs(
+                    method: $method,
+                    arguments: $arguments,
+                ),
             );
         } catch (Throwable $exception) {
             $this->events?->dispatch(new CommandFailed($method, $parameters, $exception, $this));
@@ -75,6 +90,22 @@ class Connection extends BaseConnection
         $this->events?->dispatch(new CommandExecuted($method, $parameters, $timeMs, $this));
 
         return $result;
+    }
+
+    /**
+     * @param string $name
+     */
+    public function funnel($name): ConcurrencyLimiterBuilder
+    {
+        return new ConcurrencyLimiterBuilder($this, $name);
+    }
+
+    /**
+     * @param string $name
+     */
+    public function throttle($name): DurationLimiterBuilder
+    {
+        return new DurationLimiterBuilder($this, $name);
     }
 
     /**
@@ -109,8 +140,9 @@ class Connection extends BaseConnection
      * message, the way the predis connection calls it.
      *
      * The subscription owns a connection of its own, as the protocol requires. It ends when
-     * the callback throws or the coroutine running it ends, and its connection is released
-     * either way.
+     * the callback throws, when the coroutine running it ends, or with a
+     * RedisConnectionException when the connection is lost; its connection is released
+     * every way. A failure to close is not allowed to hide the exception that ended the loop.
      *
      * @param array<array-key, string>|string $channels
      * @param string                          $method
@@ -127,13 +159,27 @@ class Connection extends BaseConnection
             ),
         };
 
+        $failure = null;
+
         try {
             /** @var Message $message */
             foreach ($subscription as $message) {
                 $callback($message->payload, $message->channel);
             }
-        } finally {
+        } catch (Throwable $exception) {
+            $failure = $exception;
+        }
+
+        try {
             $subscription->close();
+        } catch (Throwable $exception) {
+            if ($failure === null) {
+                throw $exception;
+            }
+        }
+
+        if ($failure !== null) {
+            throw $failure;
         }
     }
 
@@ -142,17 +188,42 @@ class Connection extends BaseConnection
      */
     private function batch(?callable $callback, bool $atomic): CommandBatch|array
     {
-        $batch = new CommandBatch(
+        $commandBatch = new CommandBatch(
             pipeline: $this->redisClient->pipeline(),
             atomic: $atomic,
         );
 
         if ($callback === null) {
-            return $batch;
+            return $commandBatch;
         }
 
-        $batch->collect($callback);
+        $commandBatch->collect($callback);
 
-        return $batch->exec();
+        return $commandBatch->exec();
+    }
+
+    /**
+     * The deadline of one raw command: null — the connection's own — unless the command
+     * waits on the server. A wait without end gets no deadline, since the extension refuses
+     * one; any other wait gets the wait plus the connection's budget.
+     *
+     * @param list<mixed> $arguments
+     */
+    private function deadlineMs(string $method, array $arguments): ?int
+    {
+        $waitMs = BlockingCommands::waitMs(
+            command: $method,
+            arguments: $arguments,
+        );
+
+        if ($waitMs === null) {
+            return null;
+        }
+
+        if ($waitMs === 0) {
+            return 0;
+        }
+
+        return $this->redisClient->blockingDeadlineMs($waitMs / 1000);
     }
 }

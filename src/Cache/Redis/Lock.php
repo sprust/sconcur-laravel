@@ -4,13 +4,11 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel\Cache\Redis;
 
-use Fiber;
 use Illuminate\Cache\Lock as BaseLock;
 use Illuminate\Cache\LuaScripts;
 use Illuminate\Contracts\Cache\LockTimeoutException;
-use Illuminate\Support\Sleep;
 use SConcur\Features\Redis\Connection as RedisClient;
-use SConcur\Features\Sleeper\Sleeper;
+use SConcur\Laravel\Support\CooperativeSleep;
 
 /**
  * The lock of the `sconcur_redis` store: `SET NX` to take it, and the framework's own Lua
@@ -84,9 +82,7 @@ class Lock extends BaseLock
      *
      * The framework waits with usleep(), which inside a coroutine freezes the whole process
      * — every other request of the worker included — for the length of the pause, and does
-     * it again on every attempt. Here a coroutine waits through Sleeper, which suspends only
-     * the caller. Outside a coroutine there is nothing to yield to, and the framework's
-     * Sleep stays, so Sleep::fake() still works in tests.
+     * it again on every attempt. Here the pause is CooperativeSleep's.
      *
      * @param int           $seconds
      * @param callable|null $callback
@@ -104,7 +100,7 @@ class Lock extends BaseLock
                 throw new LockTimeoutException();
             }
 
-            $this->pause($this->sleepMilliseconds * 1000);
+            CooperativeSleep::usleep($this->sleepMilliseconds * 1000);
         }
 
         if (is_callable($callback)) {
@@ -121,16 +117,5 @@ class Lock extends BaseLock
     protected function getCurrentOwner(): ?string
     {
         return $this->client->get($this->name);
-    }
-
-    private function pause(int $microseconds): void
-    {
-        if (Fiber::getCurrent() !== null && extension_loaded('sconcur')) {
-            Sleeper::usleep($microseconds);
-
-            return;
-        }
-
-        Sleep::usleep($microseconds);
     }
 }

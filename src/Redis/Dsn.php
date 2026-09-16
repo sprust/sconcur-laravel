@@ -16,9 +16,9 @@ use SConcur\Laravel\Redis\Exceptions\UnsupportedRedisOptionException;
  * - `redis://` for TCP, `rediss://` for TLS, `unix://` for a socket, where the path is
  *   the socket and `db`, `user` and `pass` travel as query parameters because they have
  *   nowhere else to go;
- * - redis-rs percent-decodes the credentials of the URL and the query values, so every
- *   one of them is written with rawurlencode() — a password holding `@` or `/` would
- *   otherwise split the URL somewhere else.
+ * - redis-rs percent-decodes the credentials of the URL, the socket path and the query
+ *   values, so every one of them is written with rawurlencode() — a password holding `@`
+ *   or `/` would otherwise split the URL somewhere else.
  *
  * `url` is not read here: RedisManager has already merged it into the fields through
  * ConfigurationUrlParser, and Connector does the same for the cache store.
@@ -29,6 +29,10 @@ class Dsn
     public const string SCHEME_TLS  = 'tls';
     public const string SCHEME_UNIX = 'unix';
 
+    private const string DEFAULT_HOST = '127.0.0.1';
+
+    private const string DEFAULT_PORT = '6379';
+
     /**
      * @param array<string, mixed> $config
      */
@@ -37,8 +41,14 @@ class Dsn
         $scheme = strtolower((string) ($config['scheme'] ?? ''));
 
         return match ($scheme) {
-            '', self::SCHEME_TCP => self::network(config: $config, urlScheme: 'redis'),
-            self::SCHEME_TLS     => self::network(config: $config, urlScheme: 'rediss'),
+            '', self::SCHEME_TCP => self::network(
+                config: $config,
+                urlScheme: 'redis',
+            ),
+            self::SCHEME_TLS     => self::network(
+                config: $config,
+                urlScheme: 'rediss',
+            ),
             self::SCHEME_UNIX    => self::socket($config),
             default              => throw new UnsupportedRedisOptionException(
                 sprintf(
@@ -56,7 +66,7 @@ class Dsn
     private static function network(array $config, string $urlScheme): string
     {
         $host = (string) ($config['host'] ?? '');
-        $host = $host === '' ? '127.0.0.1' : $host;
+        $host = ($host === '') ? self::DEFAULT_HOST : $host;
 
         // An IPv6 literal carries colons of its own, and the URL tells them from the port
         // separator only by the brackets.
@@ -65,7 +75,7 @@ class Dsn
         }
 
         $port = (string) ($config['port'] ?? '');
-        $port = $port === '' ? '6379' : $port;
+        $port = ($port === '') ? self::DEFAULT_PORT : $port;
 
         return $urlScheme . '://' . self::credentials($config) . $host . ':' . $port . '/' . self::database($config);
     }
@@ -99,7 +109,12 @@ class Dsn
             $parameters[] = 'pass=' . rawurlencode($password);
         }
 
-        return 'unix://' . $path . '?' . implode('&', $parameters);
+        // The driver reads the socket back as a file path, percent-decoded, so each segment is
+        // encoded: a `?` or `#` in a directory name would otherwise end the path there, and
+        // a `%` would be decoded into something else.
+        $encodedPath = implode('/', array_map(rawurlencode(...), explode('/', $path)));
+
+        return 'unix://' . $encodedPath . '?' . implode('&', $parameters);
     }
 
     /**

@@ -46,7 +46,7 @@ class Store extends TaggableStore implements LockProvider
     {
         $value = $this->client->get($this->prefix . $key);
 
-        return $value === null ? null : $this->unserialize($value);
+        return ($value === null) ? null : $this->unserialize($value);
     }
 
     /**
@@ -72,7 +72,7 @@ class Store extends TaggableStore implements LockProvider
             // the lookup lands on the same entry either way.
             $value = $values[$this->prefix . $key] ?? null;
 
-            $results[$key] = $value === null ? null : $this->unserialize($value);
+            $results[$key] = ($value === null) ? null : $this->unserialize($value);
         }
 
         return $results;
@@ -84,10 +84,13 @@ class Store extends TaggableStore implements LockProvider
      */
     public function put($key, $value, $seconds): bool
     {
-        return $this->client->set(
-            key: $this->prefix . $key,
-            value: (string) $this->serialize($value),
-            ttlSeconds: max(1, (int) $seconds),
+        return $this->set(
+            key: (string) $key,
+            value: $value,
+            options: [
+                'EX',
+                max(1, (int) $seconds),
+            ],
         );
     }
 
@@ -105,9 +108,9 @@ class Store extends TaggableStore implements LockProvider
 
         $ttlSeconds = max(1, (int) $seconds);
 
-        $replies = $this->client->transaction(function (Pipeline $transaction) use ($values, $ttlSeconds): void {
+        $replies = $this->client->transaction(function (Pipeline $pipeline) use ($values, $ttlSeconds): void {
             foreach ($values as $key => $value) {
-                $transaction->command(
+                $pipeline->command(
                     name: 'SET',
                     arguments: [
                         $this->prefix . $key,
@@ -136,11 +139,14 @@ class Store extends TaggableStore implements LockProvider
      */
     public function add($key, mixed $value, $seconds): bool
     {
-        return $this->client->set(
-            key: $this->prefix . $key,
-            value: (string) $this->serialize($value),
-            ttlSeconds: max(1, (int) $seconds),
-            ifNotExists: true,
+        return $this->set(
+            key: (string) $key,
+            value: $value,
+            options: [
+                'EX',
+                max(1, (int) $seconds),
+                'NX',
+            ],
         );
     }
 
@@ -173,9 +179,10 @@ class Store extends TaggableStore implements LockProvider
      */
     public function forever($key, $value): bool
     {
-        return $this->client->set(
-            key: $this->prefix . $key,
-            value: (string) $this->serialize($value),
+        return $this->set(
+            key: (string) $key,
+            value: $value,
+            options: [],
         );
     }
 
@@ -232,6 +239,28 @@ class Store extends TaggableStore implements LockProvider
     public function client(): RedisClient
     {
         return $this->client;
+    }
+
+    /**
+     * Every write goes through SET as a raw command, the one putMany() uses too, so a number
+     * reaches the server in one spelling whichever method stored it: the feature writes a
+     * float in its shortest exact form, where a (string) cast would follow the `precision`
+     * setting and turn 1e15 into `1.0E+15`.
+     *
+     * @param list<string|int> $options
+     */
+    protected function set(string $key, mixed $value, array $options): bool
+    {
+        $reply = $this->client->command(
+            name: 'SET',
+            arguments: [
+                $this->prefix . $key,
+                $this->serialize($value),
+                ...$options,
+            ],
+        );
+
+        return $reply !== null;
     }
 
     protected function serialize(mixed $value): string|int|float

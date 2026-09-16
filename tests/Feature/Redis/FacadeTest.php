@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Redis;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
+use SConcur\Exceptions\Redis\InvalidRedisArgumentException;
 use SConcur\Exceptions\Redis\NestedPipelineExecutionException;
 use SConcur\Exceptions\Redis\RedisCommandException;
 use SConcur\Features\Redis\Connection as RedisClient;
@@ -20,6 +21,8 @@ use SConcur\Laravel\Redis\CommandBatch;
 use SConcur\Laravel\Redis\Connection;
 use SConcur\Laravel\Redis\Exceptions\RedisClusterNotSupportedException;
 use SConcur\Laravel\Redis\Exceptions\UnsupportedRedisCallException;
+use SConcur\Laravel\Redis\Limiters\ConcurrencyLimiterBuilder;
+use SConcur\Laravel\Redis\Limiters\DurationLimiterBuilder;
 use SConcur\Scheduler\Scheduler;
 use SConcur\WaitGroup;
 
@@ -259,7 +262,9 @@ class FacadeTest extends BaseRedisTestCase
 
     /**
      * A subscriber and a publisher in two coroutines of one process. The publisher repeats
-     * until PUBLISH counts a receiver, because it cannot know when the SUBSCRIBE landed.
+     * until PUBLISH counts a receiver, because it cannot know when the SUBSCRIBE landed. The
+     * subscriber has a deadline, so a publisher that gives up fails the test instead of
+     * leaving it waiting for a message that never comes.
      */
     #[Test]
     public function aSubscriptionDeliversToTheCallback(): void
@@ -297,6 +302,7 @@ class FacadeTest extends BaseRedisTestCase
                     }
                 }
             },
+            timeoutMs: self::COROUTINE_TIMEOUT_MS,
         );
 
         $waitGroup->waitAll();
@@ -341,6 +347,135 @@ class FacadeTest extends BaseRedisTestCase
 
         self::assertSame('ran', $result);
         self::assertSame(0, $this->redis()->command('exists', ['funnel1']));
+    }
+
+    /** PHP keeps `'0'` and `'1'` as integer keys, so the shape cannot tell this map from a list. */
+    #[Test]
+    public function aMapOfNumericKeysStaysPairsForThePairCommands(): void
+    {
+        $redis = $this->redis();
+
+        $this->callMagic($redis, 'mset', ['0' => 'zero', '1' => 'one']);
+        $this->callMagic($redis, 'hset', 'hash', ['0' => 'zero', 'field' => 'value']);
+
+        self::assertSame('zero', $redis->command('get', ['0']));
+        self::assertSame('one', $redis->command('get', ['1']));
+        self::assertSame('zero', $redis->client()->hGet('hash', '0'));
+        self::assertSame('value', $redis->client()->hGet('hash', 'field'));
+    }
+
+    /** ZADD reads a map the way predis does: member => score. */
+    #[Test]
+    public function aZaddMapIsMemberToScore(): void
+    {
+        $this->callMagic($this->redis(), 'zadd', 'ranking', ['first' => 1, 'second' => 2.5]);
+
+        self::assertSame(2.5, $this->redis()->client()->zScore('ranking', 'second'));
+    }
+
+    #[Test]
+    public function aMapForACommandThatTakesAListIsRefused(): void
+    {
+        $this->expectException(InvalidRedisArgumentException::class);
+
+        $this->callMagic($this->redis(), 'del', ['first' => 'second']);
+    }
+
+    /**
+     * The workbench connection has `timeout_ms => 5000`. A flat deadline would be refused by
+     * the extension for a wait of 5 seconds and for a wait without end.
+     */
+    #[Test]
+    public function aBlockingCommandGetsTheDeadlineItsWaitNeeds(): void
+    {
+        $redis = $this->redis();
+
+        $redis->command('rpush', ['queue', 'first', 'second']);
+
+        self::assertSame(['queue', 'first'], $this->callMagic($redis, 'blpop', 'queue', 5));
+        self::assertSame(['queue', 'second'], $this->callMagic($redis, 'brpop', ['queue'], 0));
+        self::assertNull($this->callMagic($redis, 'blpop', 'empty', 0.1));
+    }
+
+    #[Test]
+    public function aStreamReadWithBlockGetsTheDeadlineItsWaitNeeds(): void
+    {
+        $redis = $this->redis();
+
+        $redis->command('xadd', ['stream', '*', 'field', 'value']);
+
+        $reply = $redis->command('xread', ['BLOCK', 6000, 'STREAMS', 'stream', '0']);
+
+        self::assertIsArray($reply);
+        self::assertNull($redis->command('xread', ['BLOCK', 100, 'STREAMS', 'stream', '$']));
+    }
+
+    /** A command failing while it runs does not stop the others — in a transaction too. */
+    #[Test]
+    public function aRuntimeErrorInATransactionTakesItsOwnPlace(): void
+    {
+        $redis = $this->redis();
+
+        $redis->command('hset', ['hash', 'field', 'value']);
+
+        $replies = $redis->transaction(static function (CommandBatch $transaction): void {
+            $transaction->command('incr', ['hash']);
+            $transaction->command('set', ['after', 'ran']);
+        });
+
+        self::assertIsArray($replies);
+        self::assertInstanceOf(ErrorReply::class, $replies[0]);
+        self::assertSame('OK', $replies[1]);
+        self::assertSame('ran', $redis->command('get', ['after']));
+    }
+
+    /** A command refused while the transaction is queued aborts all of it, and the call throws. */
+    #[Test]
+    public function aQueueingErrorAbortsTheTransaction(): void
+    {
+        $redis = $this->redis();
+
+        try {
+            $redis->transaction(static function (CommandBatch $transaction): void {
+                $transaction->command('set', ['before', 'queued']);
+                $transaction->command('get', []);
+            });
+
+            self::fail('The transaction ran.');
+        } catch (RedisCommandException $exception) {
+            self::assertStringContainsString('EXECABORT', $exception->getMessage());
+        }
+
+        self::assertNull($redis->command('get', ['before']));
+    }
+
+    #[Test]
+    public function theLimitersPauseWithoutFreezingTheWorker(): void
+    {
+        self::assertInstanceOf(ConcurrencyLimiterBuilder::class, $this->redis()->funnel('funnel'));
+        self::assertInstanceOf(DurationLimiterBuilder::class, $this->redis()->throttle('throttle'));
+
+        $outcome = null;
+
+        $longestStallMs = $this->longestStallMs([
+            function (): void {
+                $this->redis()->funnel('funnel')->limit(1)->then(static function (): void {
+                    Sleeper::usleep(600_000);
+                });
+            },
+            function () use (&$outcome): void {
+                Sleeper::usleep(20_000);
+
+                $outcome = $this->redis()->funnel('funnel')
+                    ->limit(1)
+                    ->block(5)
+                    ->sleep(250)
+                    ->then(static fn(): string => 'ran');
+            },
+        ]);
+
+        self::assertSame('ran', $outcome);
+        self::assertLessThan(150, $longestStallMs);
     }
 
     private function callMagic(object $target, string $method, mixed ...$arguments): mixed

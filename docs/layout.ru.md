@@ -13,8 +13,10 @@ src/Queue/Rabbitmq/            — драйвер очереди и консью
 src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам)
 src/Database/Mysql/            — соединение sconcur_mysql (Connector, Connection, Dsn, TransactionStack)
 src/Redis/                     — Redis-клиент sconcur (Connector, Connection, Dsn, CommandBatch,
-                                 UnsupportedCalls, Exceptions)
+                                 CommandArguments, BlockingCommands, UnsupportedCalls,
+                                 Limiters, Exceptions)
 src/Cache/Redis/               — кэш-стор sconcur_redis (Store, Lock, StoreFactory)
+src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер)
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — канал управления через кэш (stop/restart из другого контейнера)

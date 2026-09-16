@@ -190,4 +190,112 @@ class ConnectorTest extends TestCase
             name: 'missing',
         );
     }
+
+    /**
+     * @return iterable<string, array{array<string, mixed>, string}>
+     */
+    public static function valuesTheFeatureWouldMisread(): iterable
+    {
+        yield 'a database that is not a number' => [['database' => 'abc'], '"database"'];
+        yield 'a negative database' => [['database' => -1], '"database"'];
+        yield 'a port out of range' => [['port' => 70000], '"port"'];
+        yield 'a deadline that is not a number' => [['timeout_ms' => 'soon'], '"timeout_ms"'];
+        yield 'a pool past the ceiling' => [['pool_size' => 65], '"pool_size"'];
+        yield 'an empty pool' => [['pool_size' => 0], '"pool_size"'];
+        yield 'a host with a scheme' => [['host' => 'tls://example.com'], '"scheme"'];
+        yield 'a socket in the host' => [['host' => '/run/redis.sock'], '"unix"'];
+        yield 'a path over tcp' => [['path' => '/run/redis.sock'], '"path"'];
+        yield 'a host with a socket' => [['scheme' => 'unix', 'path' => '/run/redis.sock', 'host' => 'scl-redis'], '"host"'];
+        yield 'a username without a password' => [['username' => 'app'], '"username"'];
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    #[Test]
+    #[DataProvider('valuesTheFeatureWouldMisread')]
+    public function aValueTheFeatureWouldMisreadIsRefused(array $config, string $message): void
+    {
+        $this->expectException(UnsupportedRedisOptionException::class);
+        $this->expectExceptionMessage($message);
+
+        (new Connector())->client(config: $config);
+    }
+
+    #[Test]
+    public function numbersAsStringsFromTheEnvironmentAreAccepted(): void
+    {
+        $client = (new Connector())->client(
+            config: [
+                'host'       => 'scl-redis',
+                'port'       => '6380',
+                'database'   => '2',
+                'timeout_ms' => '1500',
+                'pool_size'  => '64',
+            ],
+        );
+
+        self::assertSame('redis://scl-redis:6380/2', $client->dsn);
+    }
+
+    /** The entry wins over a cluster of the same name, the way RedisManager resolves it. */
+    #[Test]
+    public function anEntryWinsOverAClusterOfTheSameName(): void
+    {
+        $client = (new Connector())->clientForConnection(
+            redis: [
+                'cache'    => [
+                    'host' => 'scl-redis',
+                ],
+                'clusters' => [
+                    'cache' => [
+                        ['host' => 'one'],
+                    ],
+                ],
+            ],
+            name: 'cache',
+        );
+
+        self::assertSame('redis://scl-redis:6379/0', $client->dsn);
+    }
+
+    /** Under another facade client the options are that client's, and the store does not read them. */
+    #[Test]
+    public function theOptionsOfAnotherClientAreNotChecked(): void
+    {
+        $client = (new Connector())->clientForConnection(
+            redis: [
+                'client'  => 'phpredis',
+                'options' => [
+                    'prefix'     => 'laravel_database_',
+                    'persistent' => true,
+                ],
+                'cache'   => [
+                    'host' => 'scl-redis',
+                ],
+            ],
+            name: 'cache',
+        );
+
+        self::assertSame('redis://scl-redis:6379/0', $client->dsn);
+    }
+
+    #[Test]
+    public function theOptionsOfThisClientAreChecked(): void
+    {
+        $this->expectException(UnsupportedRedisOptionException::class);
+
+        (new Connector())->clientForConnection(
+            redis: [
+                'client'  => 'sconcur',
+                'options' => [
+                    'prefix' => 'laravel_database_',
+                ],
+                'cache'   => [
+                    'host' => 'scl-redis',
+                ],
+            ],
+            name: 'cache',
+        );
+    }
 }

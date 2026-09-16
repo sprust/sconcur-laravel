@@ -118,4 +118,17 @@ class DsnTest extends TestCase
             'scheme' => 'redis',
         ]);
     }
+
+    /** The driver reads the socket back percent-decoded, so a `#` or a space must not end it. */
+    #[Test]
+    public function theSocketPathIsEncodedSegmentBySegment(): void
+    {
+        self::assertSame(
+            'unix:///run/my%20app%23one/redis.sock?db=0',
+            Dsn::build([
+                'scheme' => 'unix',
+                'path'   => '/run/my app#one/redis.sock',
+            ]),
+        );
+    }
 }

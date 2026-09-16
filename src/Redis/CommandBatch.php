@@ -13,9 +13,10 @@ use SConcur\Features\Redis\Pipeline;
  *
  * With a callback the batch is sent as soon as the callback returns, and the replies are
  * what the call answers with. Without one the batch itself is returned, and `exec()` sends
- * it. A failed command takes its own place among the replies as a
- * `SConcur\Features\Redis\Dto\ErrorReply`; inside a transaction the server aborts the
- * whole of it instead.
+ * it. A command that fails while it runs takes its own place among the replies as a
+ * `SConcur\Features\Redis\Dto\ErrorReply`, and the others run — in a transaction too. A
+ * command the server refuses while a transaction is being queued is different: EXEC answers
+ * EXECABORT, none of the commands run, and the call throws.
  */
 class CommandBatch
 {
@@ -36,7 +37,10 @@ class CommandBatch
 
         $this->pipeline->command(
             name: strtoupper($method),
-            arguments: CommandArguments::flatten($parameters),
+            arguments: CommandArguments::flatten(
+                command: $method,
+                parameters: $parameters,
+            ),
         );
 
         return $this;

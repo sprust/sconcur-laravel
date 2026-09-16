@@ -6,7 +6,10 @@ namespace SConcur\Laravel\Tests\Feature\Cache;
 
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Carbon\CarbonInterval as Duration;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Sleep;
+use RuntimeException;
 use PHPUnit\Framework\Attributes\Test;
 use SConcur\Features\Redis\Connection as RedisClient;
 use SConcur\Features\Sleeper\Sleeper;
@@ -229,48 +232,70 @@ class SconcurRedisStoreTest extends BaseRedisTestCase
     }
 
     /**
-     * The waiter pauses through Sleeper, so the holder keeps running while it waits: the
-     * holder's release is what the waiter's next attempt sees.
+     * The waiter pauses between attempts, and a ticker coroutine beside it keeps waking: the
+     * pause is the waiter's alone. With the framework's usleep() the ticker would stall for
+     * the whole 250 ms of every pause.
      */
     #[Test]
     public function blockWaitsForAnotherCoroutineWithoutFreezingIt(): void
     {
-        $order = [];
+        $acquired = false;
 
-        $waitGroup = WaitGroup::create();
-
-        $waitGroup->add(
-            callback: function () use (&$order): void {
+        $longestStallMs = $this->longestStallMs([
+            function (): void {
                 $lock = $this->store()->lock('resource', 60);
 
                 $lock->acquire();
 
-                $order[] = 'held';
-
-                Sleeper::usleep(200_000);
-
-                $order[] = 'releasing';
+                Sleeper::usleep(600_000);
 
                 $lock->release();
             },
-        );
+            function () use (&$acquired): void {
+                Sleeper::usleep(20_000);
 
-        $waitGroup->add(
-            callback: function () use (&$order): void {
-                Sleeper::usleep(50_000);
-
-                $this->store()->lock('resource', 60)->betweenBlockedAttemptsSleepFor(20)->block(
-                    5,
-                    static function () use (&$order): void {
-                        $order[] = 'acquired';
-                    },
-                );
+                $acquired = $this->store()
+                    ->lock('resource', 60)
+                    ->betweenBlockedAttemptsSleepFor(250)
+                    ->block(5);
             },
-        );
+        ]);
 
-        $waitGroup->waitAll();
+        self::assertTrue($acquired);
+        self::assertLessThan(150, $longestStallMs);
+    }
 
-        self::assertSame(['held', 'releasing', 'acquired'], $order);
+    /** The measurement above is worth something only if it sees a native pause. */
+    #[Test]
+    public function theStallMeasurementSeesANativePause(): void
+    {
+        $longestStallMs = $this->longestStallMs([
+            static function (): void {
+                Sleeper::usleep(20_000);
+
+                usleep(250_000);
+            },
+        ]);
+
+        self::assertGreaterThanOrEqual(240, $longestStallMs);
+    }
+
+    /** Outside a coroutine the pause is the framework's Sleep, which a test can fake. */
+    #[Test]
+    public function blockOutsideACoroutineSleepsThroughTheFrameworksSleep(): void
+    {
+        Sleep::fake(syncWithCarbon: true);
+
+        $this->store()->lock('resource', 60)->acquire();
+
+        try {
+            $this->store()->lock('resource', 60)->betweenBlockedAttemptsSleepFor(250)->block(1);
+
+            self::fail('The lock was taken while it was held.');
+        } catch (LockTimeoutException) {
+        }
+
+        Sleep::assertSlept(static fn(Duration $duration): bool => (int) $duration->totalMilliseconds === 250, 3);
     }
 
     /** Concurrent increments of one key from many coroutines: none is lost. */
@@ -314,11 +339,21 @@ class SconcurRedisStoreTest extends BaseRedisTestCase
         self::assertSame(1, $wins);
     }
 
-    /** The store builds its own connections, so the facade's client is not its concern. */
+    /**
+     * The store builds its own connections: with RedisManager made unusable and the facade on
+     * another client — whose options, prefix included, are that client's business — the store
+     * still works.
+     */
     #[Test]
     public function theStoreDoesNotDependOnTheFacadeClient(): void
     {
         config()->set('database.redis.client', 'phpredis');
+        config()->set('database.redis.options', ['prefix' => 'laravel_database_']);
+
+        $this->getApp()->forgetInstance('redis');
+        $this->getApp()->bind('redis', static function (): never {
+            throw new RuntimeException('The store must not go through RedisManager.');
+        });
 
         Cache::forgetDriver('sconcur_redis');
 
@@ -328,9 +363,11 @@ class SconcurRedisStoreTest extends BaseRedisTestCase
         self::assertSame('value', $this->cache()->get('key'));
     }
 
+    /** With the facade on the sconcur client, the options are this client's, and a prefix is refused. */
     #[Test]
     public function theStoreRefusesWhatTheClientRefuses(): void
     {
+        config()->set('database.redis.client', 'sconcur');
         config()->set('database.redis.options', ['prefix' => 'laravel_database_']);
 
         Cache::forgetDriver('sconcur_redis');
@@ -338,6 +375,65 @@ class SconcurRedisStoreTest extends BaseRedisTestCase
         $this->expectException(UnsupportedRedisOptionException::class);
 
         $this->cache();
+    }
+
+    #[Test]
+    public function manyFindsIntegerLikeKeysWithAndWithoutAPrefix(): void
+    {
+        $this->cache()->putMany(['1' => 'one', '2' => 'two'], 60);
+
+        self::assertSame(['1' => 'one', '2' => 'two', '3' => null], $this->cache()->many(['1', '2', '3']));
+
+        config()->set('cache.prefix', '7');
+
+        Cache::forgetDriver('sconcur_redis');
+
+        $this->cache()->putMany(['1' => 'seventeen'], 60);
+
+        self::assertSame(['1' => 'seventeen'], $this->cache()->many(['1']));
+        self::assertSame(serialize('seventeen'), $this->client()->get('71'));
+    }
+
+    /** put() and putMany() write a number in one spelling, the shortest that reads back exactly. */
+    #[Test]
+    public function aFloatIsWrittenTheSameWayByEveryMethod(): void
+    {
+        $this->cache()->put('put', 0.1 + 0.2, 60);
+        $this->cache()->putMany(['many' => 0.1 + 0.2], 60);
+        $this->cache()->forever('large', 1e15);
+
+        self::assertSame('0.30000000000000004', $this->client()->get('put'));
+        self::assertSame('0.30000000000000004', $this->client()->get('many'));
+        self::assertSame('1000000000000000', $this->client()->get('large'));
+        self::assertSame(1000000000000001, $this->cache()->increment('large'));
+    }
+
+    #[Test]
+    public function aLockWithoutSecondsHasNoExpiry(): void
+    {
+        $lock = $this->store()->lock('resource');
+
+        self::assertTrue($lock->acquire());
+        self::assertNull($this->lockClient()->ttl('resource'));
+    }
+
+    #[Test]
+    public function refreshingWithZeroSecondsRemovesTheExpiry(): void
+    {
+        $lock = $this->store()->lock('resource', 60);
+
+        $lock->acquire();
+
+        self::assertTrue($lock->refresh(0));
+        self::assertNull($this->lockClient()->ttl('resource'));
+    }
+
+    #[Test]
+    public function aRefreshByAnotherOwnerIsRefused(): void
+    {
+        $this->store()->lock('resource', 60)->acquire();
+
+        self::assertFalse($this->store()->lock('resource', 60)->refresh(120));
     }
 
     private function cache(): Repository

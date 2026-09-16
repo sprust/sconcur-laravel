@@ -125,8 +125,11 @@ src/Database/Mysql/             — Connector, Connection, Dsn, TransactionStack
                                   TransactionState
 src/Redis/                      — Connector (the RedisManager client, and every Redis
                                   config check), Connection (predis-style raw commands),
-                                  Dsn, CommandBatch, UnsupportedCalls, Exceptions/
+                                  Dsn, CommandBatch, CommandArguments (per-command array
+                                  spreading), BlockingCommands (deadlines of waiting
+                                  commands), UnsupportedCalls, Limiters/, Exceptions/
 src/Cache/Redis/                — Store, Lock (cooperative block()), StoreFactory
+src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
 src/Tasks/Control/              — stop/restart through a cache key, from any container
@@ -188,7 +191,10 @@ Points worth knowing before changing anything:
   `redis.options` (`prefix`, `max_retries`, `backoff_*`, `persistent`, …) throws
   `UnsupportedRedisOptionException` unless switched off (`null`/`false`/`''`/`0`/`[]`); a
   cluster throws `RedisClusterNotSupportedException`; `multi`/`exec`/`watch`/`select`/raw
-  `subscribe` throw `UnsupportedRedisCallException` with the replacement. The demo and the
+  `subscribe` throw `UnsupportedRedisCallException` with the replacement. Values the feature
+  would misread are refused too: a non-integer `database`/`port`/`*_ms`, `pool_size`
+  outside 1…64, a scheme in `host`, keys foreign to the scheme, a username without a
+  password (redis-rs then sends no AUTH — checked against the live server). The demo and the
   workbench write their `redis` section out whole — `database` is merged with the
   framework's file only under `connections`, so their section replaces the framework's,
   whose entries would be refused.
@@ -197,10 +203,20 @@ Points worth knowing before changing anything:
   transaction a neighbour's commands land in, and the client refuses both. `Store` is written
   on the feature's typed API and keeps `RedisStore`'s storage format. It builds its
   connections through `Connector::clientForConnection()`, not `RedisManager`, so it works
-  whatever `redis.client` is.
+  whatever `redis.client` is — and checks `redis.options` only when that client is
+  `sconcur`, since under phpredis or predis the options are theirs.
 - **`CacheManager::extend()` and `RedisManager::extend()` bind the closure to the manager.**
-  A `static` closure cannot be bound and silently yields `null`, so the closures handed to
-  them in the provider are not static, unlike the rest of the file.
+  Binding a `static` closure raises "Cannot bind an instance to a static closure", which the
+  framework turns into an `ErrorException`, so the closures handed to them in the provider
+  are not static, unlike the rest of the file.
+- **A retry loop must not pause with `usleep()`/`Sleep::usleep()` inside a coroutine** — it
+  freezes the worker. `Cache\Redis\Lock::block()` and the `Redis\Limiters\` subclasses pause
+  through `Support\CooperativeSleep`; the tests measure it with a ticker coroutine
+  (`BaseRedisTestCase::longestStallMs()`), and a test proves the measurement sees a native
+  pause.
+- **How a predis-style array argument is spread depends on the command**
+  (`CommandArguments`): PHP stores `['0' => 'a']` as a list, so the shape cannot decide.
+  Pair commands spread key/value, `ZADD` member => score, the rest refuse a map.
 - **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
   the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;
   sqlx hardcodes that capability in its handshake, keeps `MySqlQueryResult` to two

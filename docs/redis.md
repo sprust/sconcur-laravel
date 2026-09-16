@@ -93,7 +93,7 @@ the replacement where there is one.
 | Exception | When |
 |---|---|
 | `RedisClusterNotSupportedException` | an entry of `redis.clusters` is asked for |
-| `UnsupportedRedisOptionException` | a connection entry carries a key outside the table above, set to something; `redis.options` carries `prefix` or `parameters` that are not empty, or any other key set to something; `scheme` is not `tcp`, `tls` or `unix`; `scheme => unix` has no `path` |
+| `UnsupportedRedisOptionException` | a connection entry carries a key outside the table above, set to something; `redis.options` carries `prefix` or `parameters` that are not empty, or any other key set to something; a value the feature would read differently from what it says — see below |
 | `UnsupportedRedisCallException` | a call listed in [the facade](#the-facade) section |
 
 All three live in `SConcur\Laravel\Redis\Exceptions\`.
@@ -103,6 +103,20 @@ Laravel's skeleton carries `persistent => false` and `username => null`, and a s
 that is switched off asks for nothing. `redis.options.cluster` is accepted with any value:
 it only says how the entries of `redis.clusters` are sharded, and asking for one of those
 is refused on its own.
+
+A value is refused too where the feature would take it without complaint and use it
+differently from what it says:
+
+| Value | Why |
+|---|---|
+| `database`, `port`, `timeout_ms`, `conn_max_lifetime_ms` that are not whole numbers, or a negative one | `'abc'` would become `0`, and `0` means something of its own for most of them; a number as a string, the way `env()` gives it, is accepted |
+| `port` outside 1…65535 | no such port |
+| `pool_size` outside 1…64 | the extension cuts a larger pool to 64 and reads 0 as its default |
+| `scheme` other than `tcp`, `tls` or `unix` | no such transport |
+| `host` with `://` in it | put the scheme in `scheme` |
+| `host` starting with `/` | a socket is `scheme => unix` with `path` |
+| `path` with `tcp` or `tls`; `host` or `port` with `unix`; `unix` without `path` | the key is not read under that scheme |
+| `username` without `password` | the driver logs in only when there is a password, so the connection would run as the default user |
 
 The keys applications carry over most often, and why each is refused:
 
@@ -129,12 +143,27 @@ Redis::eval($script, 1, $key, $argument);          // EVAL script 1 key argument
 Redis::command('lrange', ['list', 0, -1]);
 ```
 
-That is the spelling Laravel's own code uses for Redis — `RedisLock`, `Redis::throttle()`
-and `Redis::funnel()` — so they work on this client unchanged.
+That is the spelling Laravel's own code uses for Redis — `RedisLock` and the limiters of
+`Redis::throttle()` and `Redis::funnel()` — so they work on this client.
 
-- The method name is the command name. One level of array is spread in place: a list
-  element by element, a map as its key followed by its value. Anything deeper, and `bool` or
-  `null` anywhere, is refused by the feature with `InvalidRedisArgumentException`.
+- The method name is the command name. One level of array is spread in place, and how
+  depends on the command, not on the array: PHP stores `['0' => 'a', '1' => 'b']` exactly
+  as it stores `['a', 'b']`, so the shape cannot tell a map from a list.
+  - `mset`, `msetnx`, `hset`, `hmset` spread every array as its keys followed by its values.
+  - `zadd` reads an array the way predis does, `member => score`.
+  - Every other command spreads a list element by element, and refuses a map with
+    `InvalidRedisArgumentException`.
+
+  Anything deeper, and `bool` or `null` anywhere, is refused by the feature with the same
+  exception.
+- A blocking command gets the deadline its wait needs: its own wait plus `timeout_ms`, or
+  no deadline for a wait without end. The wait is read from the arguments the way the
+  extension reads it — `BLPOP`, `BRPOP`, `BZPOPMIN`, `BZPOPMAX`, `BLMOVE`, `BRPOPLPUSH`,
+  `BLMPOP`, `BZMPOP`, `WAIT`, `WAITAOF`, and `XREAD`/`XREADGROUP` with `BLOCK`. A flat
+  `timeout_ms` would be refused by the extension as shorter than the wait.
+- `Redis::funnel()` and `Redis::throttle()` return the framework's limiters with one change:
+  inside a coroutine the pause between attempts suspends the caller rather than freezing
+  the worker, the same as [locks](#locks).
 - The reply is the one the server sent, in RESP2 terms: `OK` as the string `'OK'`, an
   integer as `int`, a nil as `null`, an array as a list. Nothing is reshaped: `hgetall`
   answers a flat list, not a map.
@@ -185,9 +214,12 @@ connection and sends nothing until the callback returns. Then the batch goes out
 round trip, and the call answers with the replies in order. `transaction()` wraps it in
 `MULTI`/`EXEC`, and the server runs it as one unit.
 
-- A failed command in a pipeline takes its own place among the replies as a
-  `SConcur\Features\Redis\Dto\ErrorReply`; the others still run. In a transaction the
-  server aborts the whole of it instead.
+- A command that fails while it runs takes its own place among the replies as a
+  `SConcur\Features\Redis\Dto\ErrorReply`, and the others still run — in a pipeline and in
+  a transaction alike.
+- A command the server refuses while a transaction is being queued (a wrong number of
+  arguments, an unknown command) is different: `EXEC` answers `EXECABORT`, none of the
+  commands run, and the call throws `RedisCommandException`.
 - A batch with no commands answers `[]` without a round trip.
 - Without a callback the batch itself is returned, and `exec()` sends it.
 - `exec()` inside the callback throws `NestedPipelineExecutionException`: it would send the
@@ -208,8 +240,10 @@ Redis::psubscribe(['user:*'], function (string $payload, string $channel): void 
 
 The callback gets the payload and the channel, the way the framework's predis connection
 calls it. A subscription owns a connection of its own, because the protocol puts the
-connection itself into subscriber mode. The loop ends when the callback throws or the
-coroutine running it ends, and the connection is released either way.
+connection itself into subscriber mode. The loop ends when the callback throws, when the
+coroutine running it ends, or with `RedisConnectionException` when the connection is lost;
+the connection is released every way. A failure to close it does not replace the exception
+that ended the loop.
 
 `Redis::publish()` is an ordinary command and answers how many subscribers received the
 message.
@@ -240,8 +274,10 @@ CACHE_STORE=sconcur_redis
 
 The store builds its connections from `database.redis` itself, with the same
 `SConcur\Laravel\Redis\Connector` the facade uses, rather than through `RedisManager`. So
-it runs on the feature whatever `database.redis.client` says, and refuses the same
-settings the client refuses.
+it runs on the feature whatever `database.redis.client` says, and refuses the connection
+entries the client refuses. `redis.options` belong to the facade's client: the store checks
+them only when that client is `sconcur`, and otherwise leaves them to phpredis or predis —
+the store's prefix is its own.
 
 It does not reuse the framework's `RedisStore`: that one opens a transaction with
 `multi()` and closes it with `exec()` as two separate calls, which on a connection shared
@@ -279,7 +315,8 @@ owner can do either. `restoreLock()`, `forceRelease()`, `refresh()` and
 `usleep()`, which inside a coroutine freezes the whole process — every other request of the
 worker — for each pause. Inside a coroutine this store waits through the feature's
 `Sleeper`, which suspends only the caller. Outside a coroutine it keeps the framework's
-`Sleep`, so `Sleep::fake()` still works in tests.
+`Sleep`, so `Sleep::fake()` still works in tests. The pause is
+`SConcur\Laravel\Support\CooperativeSleep`, and the limiters of the facade use it too.
 
 The task pool's control channel is one such caller: it takes its key with `block()`.
 

@@ -22,6 +22,9 @@ use SConcur\Laravel\Redis\Exceptions\UnsupportedRedisOptionException;
  */
 class Connector implements ConnectorContract
 {
+    /** The value of `database.redis.client` that puts RedisManager on this connector. */
+    public const string CLIENT = 'sconcur';
+
     /** The keys of a connection entry the client reads. */
     private const array CONNECTION_KEYS = [
         'scheme',
@@ -39,13 +42,46 @@ class Connector implements ConnectorContract
     /**
      * The keys of `redis.options` that may be present. `cluster` only says how the entries
      * under `redis.clusters` are sharded, and asking for one of those is refused on its
-     * own; `prefix` and `parameters` may be there as long as they are empty.
+     * own; the others may be there as long as they are switched off.
      */
     private const array OPTION_KEYS = [
         'cluster',
         'prefix',
         'parameters',
     ];
+
+    /** The options that are refused unless switched off, even though they are expected keys. */
+    private const array OPTIONS_OFF_ONLY = [
+        'prefix',
+        'parameters',
+    ];
+
+    /** What a switched-off setting looks like. */
+    private const array OFF_VALUES = [
+        null,
+        false,
+        '',
+        0,
+        '0',
+        [],
+    ];
+
+    /** The schemes a `tcp`/`tls` URL is kept under, the way RedisManager keeps them. */
+    private const array URL_SCHEMES = [
+        Dsn::SCHEME_TCP,
+        Dsn::SCHEME_TLS,
+    ];
+
+    /** The keys a `unix` entry has no use for: the socket is `path`. */
+    private const array SOCKET_UNREAD_KEYS = [
+        'host',
+        'port',
+    ];
+
+    /** The feature's ceiling on multiplexed connections per server. */
+    private const int MAX_POOL_SIZE = 64;
+
+    private const int MAX_PORT = 65535;
 
     /** What to use instead, for the keys an application is likely to carry over. */
     private const array REPLACEMENTS = [
@@ -93,32 +129,41 @@ class Connector implements ConnectorContract
 
     /**
      * The connection named `$name` of a whole `database.redis` section, read the way
-     * RedisManager reads it. This is the path of the cache store, which does not go
-     * through RedisManager and so works whichever client the facade is on.
+     * RedisManager reads it: the entry first, the clusters after. This is the path of the
+     * cache store, which does not go through RedisManager and so works whichever client the
+     * facade is on.
+     *
+     * `redis.options` belong to the facade's client. They are checked only when that client
+     * is this one; under phpredis or predis they are that client's business, and the store
+     * does not read them — its prefix is its own.
      *
      * @param array<string, mixed> $redis
      */
     public function clientForConnection(array $redis, string $name): RedisClient
     {
-        $clusters = (array) ($redis['clusters'] ?? []);
-
-        if (isset($clusters[$name])) {
-            $this->connectToCluster(
-                config: [],
-                clusterOptions: [],
-                options: [],
-            );
-        }
-
         $config = $redis[$name] ?? null;
 
         if (!is_array($config)) {
+            $clusters = (array) ($redis['clusters'] ?? []);
+
+            if (isset($clusters[$name])) {
+                $this->connectToCluster(
+                    config: [],
+                    clusterOptions: [],
+                    options: [],
+                );
+            }
+
             throw new InvalidArgumentException(sprintf('Redis connection [%s] not configured.', $name));
         }
 
+        $options = (($redis['client'] ?? null) === self::CLIENT)
+            ? (array) ($redis['options'] ?? [])
+            : [];
+
         return $this->client(
             config: self::parseConfiguration($config),
-            options: (array) ($redis['options'] ?? []),
+            options: $options,
         );
     }
 
@@ -128,30 +173,140 @@ class Connector implements ConnectorContract
      */
     public function client(array $config, array $options = []): RedisClient
     {
+        self::assertOptions($options);
+        self::assertConnection($config);
+
+        return new RedisClient(
+            dsn: Dsn::build($config),
+            timeoutMs: self::integerOrNull(
+                config: $config,
+                key: 'timeout_ms',
+            ),
+            poolSize: self::integerOrNull(
+                config: $config,
+                key: 'pool_size',
+            ),
+            connMaxLifetimeMs: self::integerOrNull(
+                config: $config,
+                key: 'conn_max_lifetime_ms',
+            ),
+        );
+    }
+
+    /**
+     * @param array<array-key, mixed> $options
+     */
+    private static function assertOptions(array $options): void
+    {
         self::assertOnlyKnownKeys(
             values: $options,
             known: self::OPTION_KEYS,
             where: 'redis.options',
         );
 
-        foreach (['prefix', 'parameters'] as $key) {
+        foreach (self::OPTIONS_OFF_ONLY as $key) {
             if (!self::isOff($options[$key] ?? null)) {
-                throw self::unsupported(key: $key, where: 'redis.options');
+                throw self::unsupported(
+                    key: $key,
+                    where: 'redis.options',
+                );
             }
         }
+    }
 
+    /**
+     * The keys first, then the values the feature would take without complaint and use
+     * differently from what they say: a database number that is not a number becomes 0, a
+     * pool size past the ceiling is cut to it, a `tls://` host becomes a hostname with a
+     * colon in it, a username without a password logs in as nobody.
+     *
+     * @param array<array-key, mixed> $config
+     */
+    private static function assertConnection(array $config): void
+    {
         self::assertOnlyKnownKeys(
             values: $config,
             known: self::CONNECTION_KEYS,
             where: 'the Redis connection entry',
         );
 
-        return new RedisClient(
-            dsn: Dsn::build($config),
-            timeoutMs: self::optionalInt($config['timeout_ms'] ?? null),
-            poolSize: self::optionalInt($config['pool_size'] ?? null),
-            connMaxLifetimeMs: self::optionalInt($config['conn_max_lifetime_ms'] ?? null),
+        self::assertInteger(
+            config: $config,
+            key: 'database',
+            min: 0,
+            max: PHP_INT_MAX,
         );
+        self::assertInteger(
+            config: $config,
+            key: 'port',
+            min: 1,
+            max: self::MAX_PORT,
+        );
+        self::assertInteger(
+            config: $config,
+            key: 'timeout_ms',
+            min: 0,
+            max: PHP_INT_MAX,
+        );
+        self::assertInteger(
+            config: $config,
+            key: 'conn_max_lifetime_ms',
+            min: 0,
+            max: PHP_INT_MAX,
+        );
+        self::assertInteger(
+            config: $config,
+            key: 'pool_size',
+            min: 1,
+            max: self::MAX_POOL_SIZE,
+        );
+
+        $scheme = strtolower((string) ($config['scheme'] ?? ''));
+
+        $host = (string) ($config['host'] ?? '');
+
+        if ($scheme === Dsn::SCHEME_UNIX) {
+            foreach (self::SOCKET_UNREAD_KEYS as $key) {
+                if (!self::isOff($config[$key] ?? null)) {
+                    throw new UnsupportedRedisOptionException(sprintf(
+                        '"%s" is not read with the "unix" scheme: the socket is "path". Remove it.',
+                        $key,
+                    ));
+                }
+            }
+        } else {
+            if (!self::isOff($config['path'] ?? null)) {
+                throw new UnsupportedRedisOptionException(
+                    '"path" is read only with the "unix" scheme. Set "scheme" to "unix", or remove "path".',
+                );
+            }
+
+            if (str_contains($host, '://')) {
+                throw new UnsupportedRedisOptionException(sprintf(
+                    'The Redis host "%s" carries a scheme. Put the bare host in "host" and the scheme'
+                    . ' in "scheme" ("tls" for TLS).',
+                    $host,
+                ));
+            }
+
+            if (str_starts_with($host, '/')) {
+                throw new UnsupportedRedisOptionException(sprintf(
+                    'The Redis host "%s" is a socket path. Set "scheme" to "unix" and put the path in "path".',
+                    $host,
+                ));
+            }
+        }
+
+        $username = (string) ($config['username'] ?? '');
+        $password = (string) ($config['password'] ?? '');
+
+        if (($username !== '') && ($password === '')) {
+            throw new UnsupportedRedisOptionException(
+                'A Redis "username" without a "password" is not sent at all: the driver logs in only'
+                . ' when there is a password, so the connection would run as the default user.'
+                . ' Set the password, or remove the username.',
+            );
+        }
     }
 
     /**
@@ -169,7 +324,7 @@ class Connector implements ConnectorContract
 
         $driver = strtolower((string) ($parsed['driver'] ?? ''));
 
-        if (in_array($driver, [Dsn::SCHEME_TCP, Dsn::SCHEME_TLS], true)) {
+        if (in_array($driver, self::URL_SCHEMES, true)) {
             $parsed['scheme'] = $driver;
         }
 
@@ -193,8 +348,67 @@ class Connector implements ConnectorContract
                 continue;
             }
 
-            throw self::unsupported(key: (string) $key, where: $where);
+            throw self::unsupported(
+                key: (string) $key,
+                where: $where,
+            );
         }
+    }
+
+    /**
+     * A value that is set has to be a whole number in the range: `(int) 'abc'` is 0, and 0
+     * means something of its own for most of these keys.
+     *
+     * @param array<array-key, mixed> $config
+     */
+    private static function assertInteger(array $config, string $key, int $min, int $max): void
+    {
+        $value = $config[$key] ?? null;
+
+        if (($value === null) || ($value === '')) {
+            return;
+        }
+
+        $integer = self::toInteger($value);
+
+        if (($integer !== null) && ($integer >= $min) && ($integer <= $max)) {
+            return;
+        }
+
+        throw new UnsupportedRedisOptionException(sprintf(
+            '"%s" of the Redis connection entry must be a whole number from %d to %d, got %s.',
+            $key,
+            $min,
+            $max,
+            var_export($value, true),
+        ));
+    }
+
+    /**
+     * @param array<array-key, mixed> $config
+     */
+    private static function integerOrNull(array $config, string $key): ?int
+    {
+        $value = $config[$key] ?? null;
+
+        if (($value === null) || ($value === '')) {
+            return null;
+        }
+
+        return self::toInteger($value);
+    }
+
+    private static function toInteger(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        return null;
     }
 
     private static function unsupported(string $key, string $where): UnsupportedRedisOptionException
@@ -204,7 +418,7 @@ class Connector implements ConnectorContract
         $replacement = self::REPLACEMENTS[$key] ?? null;
 
         return new UnsupportedRedisOptionException(
-            $replacement === null
+            ($replacement === null)
                 ? $message . '. Remove it.'
                 : $message . ': ' . $replacement . '. Remove it.',
         );
@@ -212,11 +426,6 @@ class Connector implements ConnectorContract
 
     private static function isOff(mixed $value): bool
     {
-        return in_array($value, [null, false, '', 0, '0', []], true);
-    }
-
-    private static function optionalInt(mixed $value): ?int
-    {
-        return ($value === null || $value === '') ? null : (int) $value;
+        return in_array($value, self::OFF_VALUES, true);
     }
 }

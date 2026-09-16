@@ -342,12 +342,13 @@ class SConcurServiceProvider extends ServiceProvider
      * callAfterResolving() rather than resolving(): an application that has already resolved
      * `redis` by the time this provider registers would otherwise never see the client.
      * The closure handed to extend() is not static on purpose — the manager binds it to
-     * itself, and a static closure cannot be bound.
+     * itself, and binding a static closure raises a warning the framework turns into an
+     * exception.
      */
     private function registerRedisClient(): void
     {
-        $this->callAfterResolving('redis', static function (RedisManager $manager): void {
-            $manager->extend('sconcur', function (): RedisConnector {
+        $this->callAfterResolving('redis', static function (RedisManager $redisManager): void {
+            $redisManager->extend(RedisConnector::CLIENT, function (): RedisConnector {
                 return new RedisConnector();
             });
         });
@@ -362,8 +363,8 @@ class SConcurServiceProvider extends ServiceProvider
      */
     private function registerCacheStore(): void
     {
-        $this->callAfterResolving('cache', static function (CacheManager $manager): void {
-            $manager->extend('sconcur_redis', function (Container $app, array $config) use ($manager): Repository {
+        $this->callAfterResolving('cache', static function (CacheManager $cacheManager): void {
+            $cacheManager->extend('sconcur_redis', function (Container $app, array $config) use ($cacheManager): Repository {
                 $appConfig = $app->make('config');
 
                 $store = (new StoreFactory(connector: new RedisConnector()))->make(
@@ -373,7 +374,7 @@ class SConcurServiceProvider extends ServiceProvider
                     serializableClasses: $appConfig->get('cache.serializable_classes'),
                 );
 
-                return $manager->repository($store, $config);
+                return $cacheManager->repository($store, $config);
             });
         });
     }
