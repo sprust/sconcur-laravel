@@ -156,6 +156,16 @@ Every reason leads down one path: the controller takes the tasks off the tick, w
 the running ticks to finish, and exits. The reasons are `SIGTERM`/`SIGINT`/`SIGQUIT`, the
 `sconcur:tasks:stop` command, and going past `memory_mb`.
 
+`memory_mb` is compared against the larger of two figures: the PHP heap
+(`memory_get_usage(true)`) and the resident set size of the process (`VmRSS` from
+`/proc/self/status`). The heap alone does not see what the extension allocates — its
+runtime, the drivers, their buffers — and a leak there would grow the process until the
+container runs out of memory without ever reaching the limit. The RSS includes the
+baseline of the process as well: about 60 MiB for the demo application's pool with the
+extension loaded, so the default 256 leaves roughly 190 MiB for the tasks. Where `/proc` is
+not available the heap decides alone. The log line names the figure that crossed the limit:
+`memory limit reached (rss 312 MiB) — stopping`.
+
 The exit code tells them apart, and that is not a detail. A stop on request exits with
 zero, an exit on `memory_mb` with `TaskPool::EXIT_RESTART` (75). The `tasks` group declares
 `restartPolicy: on-failure`, so the master brings a new process up after the second and

@@ -189,7 +189,7 @@
 |---|---|---|
 | `SCONCUR_TASKS_CONTROL_KEY` | `sconcur:tasks:control` | ключ кэша, через который до пула доходят `stop` и `restart` |
 | `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | путь flock; не даёт стартовать второй копии задачи |
-| `SCONCUR_TASKS_MEMORY_MB` | `256` | лимит памяти процесса; за ним — выход с `EXIT_RESTART` |
+| `SCONCUR_TASKS_MEMORY_MB` | `256` | лимит памяти процесса, по большему из кучи PHP и RSS; за ним — выход с `EXIT_RESTART` |
 | `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | насколько мелко режется пауза, то есть как быстро пул замечает сигнал |
 | `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `1000` | автоматическое переключение корутин; `0` — выключено |
 | `SCONCUR_TASKS_REPORT_TICKS` | `true` | показывать тики в секции `consumers` панели |

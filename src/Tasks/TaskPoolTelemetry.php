@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel\Tasks;
 
+use SConcur\Laravel\Support\ProcessMemory;
+
 /**
  * Pushes the pool's snapshots to the master's telemetry collector.
  *
@@ -62,6 +64,7 @@ class TaskPoolTelemetry
         protected string $socketPath,
         protected string $name,
         protected ?TaskPoolMetrics $metrics = null,
+        protected ProcessMemory $processMemory = new ProcessMemory(),
     ) {
         $this->startedAt = microtime(true);
     }
@@ -71,8 +74,10 @@ class TaskPoolTelemetry
      * spawns. Absent env means nobody is collecting — a standalone run — and telemetry
      * stays off.
      */
-    public static function fromEnvironment(?TaskPoolMetrics $metrics = null): ?self
-    {
+    public static function fromEnvironment(
+        ?TaskPoolMetrics $metrics = null,
+        ProcessMemory $processMemory = new ProcessMemory(),
+    ): ?self {
         $socket = (string) getenv('SCONCUR_TELEMETRY_SOCKET');
         $name   = (string) getenv('SCONCUR_SERVER_NAME');
 
@@ -80,7 +85,12 @@ class TaskPoolTelemetry
             return null;
         }
 
-        return new self($socket, $name, $metrics);
+        return new self(
+            socketPath: $socket,
+            name: $name,
+            metrics: $metrics,
+            processMemory: $processMemory,
+        );
     }
 
     /**
@@ -191,13 +201,7 @@ class TaskPoolTelemetry
     /** RSS of the whole process, the same field the extension's sampler reads. */
     protected function rssBytes(): int
     {
-        $status = @file_get_contents('/proc/self/status');
-
-        if ($status === false || preg_match('/^VmRSS:\s+(\d+)\s+kB/m', $status, $matches) !== 1) {
-            return 0;
-        }
-
-        return (int) $matches[1] * 1024;
+        return $this->processMemory->rssBytes();
     }
 
     /**
