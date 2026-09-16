@@ -92,7 +92,8 @@ Six containers, prefix `scl-`:
 
 - `nginx` — the only published entry point; proxies to the HTTP pool
 - `php` — CLI only (composer, artisan, phpunit, analyzers). There is no php-fpm in
-  this repository: HTTP is served by SConcur itself.
+  this repository: HTTP is served by SConcur itself. It alone carries phpredis
+  (`ext-redis`), for `PhpRedisParityTest`; `workers` and the package run without it.
 - `workers` — supervisor running `php demo/artisan sconcur:servers:master:start`
 - `mysql`, `rabbitmq`, `redis` — **in-memory** (`tmpfs`), state is wiped when the container is
   recreated. Redis runs with a password, so the client's login path is exercised. The named-volume mounts sit beside them, commented out.
@@ -124,7 +125,9 @@ src/Database/CoroutineTransactionsManager, TransactionStore
 src/Database/Mysql/             — Connector, Connection, Dsn, TransactionStack,
                                   TransactionState
 src/Redis/                      — Connector (the RedisManager client, and every Redis
-                                  config check), Connection (predis-style raw commands),
+                                  config check), Connection (answers like Laravel's
+                                  PhpRedisConnection), PhpRedisArguments (phpredis
+                                  signatures), PhpRedisReplies (phpredis reply shapes),
                                   Dsn, CommandBatch, CommandArguments (per-command array
                                   spreading), BlockingCommands (deadlines of waiting
                                   commands), UnsupportedCalls, Limiters/, Exceptions/
@@ -214,9 +217,19 @@ Points worth knowing before changing anything:
   through `Support\CooperativeSleep`; the tests measure it with a ticker coroutine
   (`BaseRedisTestCase::longestStallMs()`), and a test proves the measurement sees a native
   pause.
-- **How a predis-style array argument is spread depends on the command**
-  (`CommandArguments`): PHP stores `['0' => 'a']` as a list, so the shape cannot decide.
-  Pair commands spread key/value, `ZADD` member => score, the rest refuse a map.
+- **`Redis::` on the sconcur client must answer like `PhpRedisConnection`.** The facade is a
+  thin layer: past Laravel's ~25 overrides a call goes to phpredis's own method, so the
+  contract applications rely on is phpredis's signatures and reply shapes (status → `true`,
+  nil → `false`, 0/1 → `bool`, scores → `float`, `hgetall`/`WITHSCORES` → maps, `type` →
+  int). `Connection` mirrors the overrides, `PhpRedisArguments` reads phpredis signatures,
+  `PhpRedisReplies` shapes replies, and `PhpRedisParityTest` runs every case through a real
+  `PhpRedisConnection` (phpredis is installed in `scl-php` only) and requires `assertSame`.
+  To extend coverage, add a case there first and let it fail. Deliberate differences, pinned
+  in `FacadeTest`: a refused command throws instead of `false`; `scan`-family answers
+  `[cursor, items]`; a script's status reply stays `'OK'` (status and bulk arrive alike).
+- **How an array argument is spread depends on the command** (`CommandArguments`): PHP
+  stores `['0' => 'a']` as a list, so the shape cannot decide. Pair commands spread
+  key/value, the phpredis signatures read their option arrays, the rest refuse a map.
 - **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
   the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;
   sqlx hardcodes that capability in its handshake, keeps `MySqlQueryResult` to two

@@ -71,6 +71,13 @@ FROM php_base AS php_cli
 RUN curl -sS https://getcomposer.org/installer \
     | php -- --install-dir=/usr/local/bin --filename=composer
 
+# phpredis, in the CLI container only: the parity tests run the same calls through
+# Laravel's PhpRedisConnection and through the sconcur client and compare the answers, so
+# the facade behaves the way the application was written against. The workers container
+# and the package itself run without it — which is the point of the sconcur client.
+# Pinned to the version sconcur/sconcur benchmarks against.
+RUN pie install phpredis/phpredis:6.3.0
+
 # The repository is bind-mounted and owned by the host user, which git refuses to touch.
 RUN git config --global --add safe.directory /app
 

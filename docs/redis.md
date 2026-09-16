@@ -5,7 +5,7 @@ English | [Русский](redis.ru.md)
 SConcur's Redis feature, wired into Laravel in two places:
 
 - the `sconcur` client of `RedisManager` — `Redis::`, `Redis::connection()`,
-  `Redis::throttle()` and `Redis::funnel()`;
+  `Redis::throttle()`, `Redis::funnel()`, and with them Laravel's `redis` queue driver;
 - the `sconcur_redis` cache store — `Cache::`, locks and tags.
 
 A command goes into the extension while the calling coroutine is suspended. Commands that
@@ -23,6 +23,8 @@ synchronously. What the feature itself does and does not do is in the library's
 - [Pub/Sub](#pubsub)
 - [The cache store](#the-cache-store)
 - [Locks](#locks)
+- [The queue](#the-queue)
+- [Moving from phpredis](#moving-from-phpredis)
 - [Limits](#limits)
 
 ## Connections
@@ -131,47 +133,68 @@ The keys applications carry over most often, and why each is refused:
 
 ## The facade
 
-`'client' => 'sconcur'` puts `Redis::` on `SConcur\Laravel\Redis\Connection`. A magic call
-is a raw command, spelled the way predis spells it:
+`'client' => 'sconcur'` puts `Redis::` on `SConcur\Laravel\Redis\Connection`, and it answers
+the way Laravel's `PhpRedisConnection` does. `Redis::` is a thin layer rather than an
+abstraction of its own: past the methods Laravel overrides, a call goes straight to the
+client, so code written against the facade is code written against phpredis — Laravel's
+default client and the most common one. `tests/Feature/Redis/PhpRedisParityTest.php` runs the
+same calls through `PhpRedisConnection` and through this connection against one server and
+requires the same answers.
 
 ```php
-Redis::set('greeting', 'hello', 'EX', 60, 'NX');   // SET greeting hello EX 60 NX
-Redis::get('greeting');
-Redis::mget(['first', 'second']);                  // MGET first second
-Redis::mset(['first' => 1, 'second' => 2]);        // MSET first 1 second 2
-Redis::eval($script, 1, $key, $argument);          // EVAL script 1 key argument
-Redis::command('lrange', ['list', 0, -1]);
+Redis::set('greeting', 'hello', 'EX', 60, 'NX');   // true, or false when the key exists
+Redis::get('missing');                             // null
+Redis::hget('hash', 'missing');                    // false
+Redis::hgetall('hash');                            // ['field' => 'value']
+Redis::zrange('ranking', 0, -1, true);             // ['member' => 1.0]
+Redis::expire('greeting', 10);                     // true
+Redis::type('greeting');                           // 1, Redis::REDIS_STRING
 ```
 
-That is the spelling Laravel's own code uses for Redis — `RedisLock` and the limiters of
-`Redis::throttle()` and `Redis::funnel()` — so they work on this client.
-
-- The method name is the command name. One level of array is spread in place, and how
-  depends on the command, not on the array: PHP stores `['0' => 'a', '1' => 'b']` exactly
-  as it stores `['a', 'b']`, so the shape cannot tell a map from a list.
-  - `mset`, `msetnx`, `hset`, `hmset` spread every array as its keys followed by its values.
-  - `zadd` reads an array the way predis does, `member => score`.
-  - Every other command spreads a list element by element, and refuses a map with
-    `InvalidRedisArgumentException`.
-
-  Anything deeper, and `bool` or `null` anywhere, is refused by the feature with the same
-  exception.
-- A blocking command gets the deadline its wait needs: its own wait plus `timeout_ms`, or
-  no deadline for a wait without end. The wait is read from the arguments the way the
-  extension reads it — `BLPOP`, `BRPOP`, `BZPOPMIN`, `BZPOPMAX`, `BLMOVE`, `BRPOPLPUSH`,
-  `BLMPOP`, `BZMPOP`, `WAIT`, `WAITAOF`, and `XREAD`/`XREADGROUP` with `BLOCK`. A flat
-  `timeout_ms` would be refused by the extension as shorter than the wait.
+- The methods `PhpRedisConnection` overrides are overridden with the same signatures and
+  results: `get`, `mget`, `set`, `setnx`, `hmget`, `hmset`, `hsetnx`, `lrem`, `blpop`,
+  `brpop`, `spop`, `zadd`, `zrangebyscore`, `zrevrangebyscore`, `zinterstore`,
+  `zunionstore`, `eval`, `evalsha`, `flushdb`, `executeRaw`, `pipeline`, `transaction`,
+  `subscribe`, `psubscribe`.
+- Any other call is read with phpredis's signature. Where that signature takes an options
+  array or an order of its own, `SConcur\Laravel\Redis\PhpRedisArguments` reads it:
+  `zRange`/`zRevRange` with `true` or `['withscores', 'byscore', 'bylex', 'rev', 'limit']`,
+  `set` with a TTL or `['nx', 'ex' => 10]`, `lRem`, `sort`, `xAdd`, `xRead`, `lPos`,
+  `getEx`, `copy`, `rawCommand`. The other methods take the command's arguments in order.
+- The reply is put in phpredis's shape by `SConcur\Laravel\Redis\PhpRedisReplies`: a status
+  of a command that only acknowledges is `true`; a nil is `false` (Laravel's overrides turn
+  `get`, `mget`, `blpop` and `brpop` back to `null`); yes/no commands such as `expire`,
+  `sismember` and `hexists` are `bool`; scores and float counters are `float`; `type` is
+  phpredis's integer constant; `hgetall`, `config get`, `zpopmin`/`zpopmax` and anything
+  `WITHSCORES` are maps; `hmget` inside a batch is keyed by field; `info` is parsed into a map.
+- One level of array in the arguments is spread in place, and how depends on the command:
+  PHP stores `['0' => 'a', '1' => 'b']` exactly as it stores `['a', 'b']`, so the shape
+  cannot tell a map from a list. `mset`, `msetnx`, `hset` and `hmset` spread every array as
+  its keys followed by its values; the phpredis signatures above read their options arrays;
+  every other command spreads a list element by element and refuses a map with
+  `InvalidRedisArgumentException`. Anything deeper, and `bool` or `null` anywhere, is refused
+  with the same exception.
+- A blocking command gets the deadline its wait needs: its own wait plus `timeout_ms`, or no
+  deadline for a wait without end. The wait is read from the arguments the way the extension
+  reads it — `BLPOP`, `BRPOP`, `BZPOPMIN`, `BZPOPMAX`, `BLMOVE`, `BRPOPLPUSH`, `BLMPOP`,
+  `BZMPOP`, `WAIT`, `WAITAOF`, and `XREAD`/`XREADGROUP` with `BLOCK`. A flat `timeout_ms`
+  would be refused by the extension as shorter than the wait.
 - `Redis::funnel()` and `Redis::throttle()` return the framework's limiters with one change:
-  inside a coroutine the pause between attempts suspends the caller rather than freezing
-  the worker, the same as [locks](#locks).
-- The reply is the one the server sent, in RESP2 terms: `OK` as the string `'OK'`, an
-  integer as `int`, a nil as `null`, an array as a list. Nothing is reshaped: `hgetall`
-  answers a flat list, not a map.
+  inside a coroutine the pause between attempts suspends the caller rather than freezing the
+  worker, the same as [locks](#locks).
 - `CommandExecuted` and `CommandFailed` are dispatched the same way the framework's
   connections dispatch them, once `Redis::enableEvents()` is on.
-- The feature's typed API is `Redis::connection()->client()`, a
-  `SConcur\Features\Redis\Connection`: `hGetAll()` folding the reply into a map, `scan()`
-  as an iterator, `blPop()` with its deadline worked out.
+- The feature's own typed API is `Redis::connection()->client()`, a
+  `SConcur\Features\Redis\Connection`: `scan()` as an iterator, `blPop()` with its deadline
+  worked out, and the rest of `vendor/sconcur/sconcur/docs/redis.md`.
+
+Where it differs from phpredis on purpose:
+
+| phpredis | Here | Why |
+|---|---|---|
+| a refused command answers `false` and keeps the reason in `getLastError()` | `RedisCommandException` | `false` from `incr` or `hget` would read as an answer, and a `WRONGTYPE` as a missing key |
+| `scan($cursor)` moves the cursor through a reference | `scan()`, `hscan()`, `sscan()` and `zscan()` answer `[cursor, items]`, items folded into a map for `hscan`/`zscan` | a facade call cannot carry a reference |
+| a status reply a Lua script returns is `true` | the string `'OK'` | the feature hands a status and a bulk string over alike |
 
 One connection object serves every coroutine of the process: it holds no socket and no
 state of its own.
@@ -197,29 +220,30 @@ The feature refuses more than that on its own — `QUIT`, `CLIENT REPLY`, `MONIT
 ## Pipelines and transactions
 
 ```php
-$replies = Redis::pipeline(function (CommandBatch $pipe): void {
+$replies = Redis::pipeline(function ($pipe): void {
     $pipe->set('a', 1);
     $pipe->incr('a');
+    $pipe->get('missing');
 });
-// ['OK', 2]
+// [true, 2, false]
 
-$replies = Redis::transaction(function (CommandBatch $transaction): void {
+$replies = Redis::transaction(function ($transaction): void {
     $transaction->incrby('counter', 2);
     $transaction->lpush('events', 'inc');
 });
 ```
 
-The callback gets a `SConcur\Laravel\Redis\CommandBatch`, which takes the same calls as the
-connection and sends nothing until the callback returns. Then the batch goes out in one
-round trip, and the call answers with the replies in order. `transaction()` wraps it in
-`MULTI`/`EXEC`, and the server runs it as one unit.
+The callback gets a `SConcur\Laravel\Redis\CommandBatch`. It takes the calls the object
+phpredis hands a callback takes, with phpredis's signatures, and sends nothing until the
+callback returns. Then the batch goes out in one round trip, and the call answers with the
+replies in order, in phpredis's shape. `transaction()` wraps it in `MULTI`/`EXEC`, and the
+server runs it as one unit.
 
-- A command that fails while it runs takes its own place among the replies as a
-  `SConcur\Features\Redis\Dto\ErrorReply`, and the others still run — in a pipeline and in
-  a transaction alike.
+- A command that fails while it runs takes its own place among the replies as `false`, as in
+  phpredis, and the others still run — in a pipeline and in a transaction alike.
 - A command the server refuses while a transaction is being queued (a wrong number of
   arguments, an unknown command) is different: `EXEC` answers `EXECABORT`, none of the
-  commands run, and the call throws `RedisCommandException`.
+  commands run, and the call throws `RedisCommandException` where phpredis answers `false`.
 - A batch with no commands answers `[]` without a round trip.
 - Without a callback the batch itself is returned, and `exec()` sends it.
 - `exec()` inside the callback throws `NestedPipelineExecutionException`: it would send the
@@ -238,8 +262,8 @@ Redis::psubscribe(['user:*'], function (string $payload, string $channel): void 
 });
 ```
 
-The callback gets the payload and the channel, the way the framework's predis connection
-calls it. A subscription owns a connection of its own, because the protocol puts the
+The callback gets the payload and the channel, the way the framework's connections call
+it. A subscription owns a connection of its own, because the protocol puts the
 connection itself into subscriber mode. The loop ends when the callback throws, when the
 coroutine running it ends, or with `RedisConnectionException` when the connection is lost;
 the connection is released every way. A failure to close it does not replace the exception
@@ -320,13 +344,60 @@ worker — for each pause. Inside a coroutine this store waits through the featu
 
 The task pool's control channel is one such caller: it takes its key with `block()`.
 
+## The queue
+
+Laravel's own `redis` queue driver runs on this client unchanged: `RedisQueue` works through
+Lua scripts, `BLPOP` and a few plain commands, and all of them go through the facade.
+
+```php
+// config/queue.php
+'redis' => [
+    'driver'      => 'redis',
+    'connection'  => 'default',   // an entry of database.redis
+    'queue'       => 'default',
+    'retry_after' => 90,
+    'block_for'   => 5,
+],
+```
+
+```dotenv
+REDIS_CLIENT=sconcur
+QUEUE_CONNECTION=redis
+```
+
+Pushed, delayed and bulk jobs, retries and `block_for` are covered by
+`tests/Feature/Redis/QueueTest.php`.
+
+- The client is chosen by `database.redis.client` for the whole application, so the queue and
+  `Redis::` are on the same client.
+- `queue:work` still runs one job at a time per process: the calls into Redis do not block
+  the process, but the framework's worker loop is sequential.
+- `bulk()` is not atomic. The framework hands the jobs to `pipeline()` and `transaction()`,
+  but its callback pushes through the connection rather than through the batch it is given,
+  so the jobs go out one command at a time.
+
+## Moving from phpredis
+
+With `REDIS_CLIENT=sconcur` Laravel's own Redis code — the facade, locks, limiters, the
+queue — needs no `ext-redis`. Before removing the extension:
+
+1. Write the `redis` section of `config/database.php` out whole, without `prefix`,
+   `max_retries` and `backoff_*` (see [connections](#connections)).
+2. Switch the cache to `CACHE_STORE=sconcur_redis`: the framework's `redis` store calls
+   `multi()` in `putMany()`.
+3. Look through the application's own Redis code for what differs on purpose: a refused
+   command caught as `false`, `scan()` with a cursor passed by reference, a script's status
+   reply compared with `true`, and calls on `Redis::connection()->client()`, which is the
+   feature's object rather than `\Redis`.
+4. Check the packages that use Redis directly. A package requiring `ext-redis` in its
+   `composer.json` keeps the extension; Horizon is not checked against this client.
+
 ## Limits
 
 - No cluster, no sentinel, no sharded pub/sub.
 - No key prefix on the facade.
 - No `WATCH`, and no `MULTI`/`EXEC` as separate calls — only `transaction()` with a callback.
 - RESP2 only.
-- Replies are not reshaped on the facade; the typed API is `Redis::connection()->client()`.
 - The framework's own `redis` cache store does not work on this client: its `putMany()`
   calls `multi()`, which is refused. Use `sconcur_redis`.
-- This package does not test Laravel's `redis` queue and session drivers on this client.
+- This package does not test Laravel's `redis` session driver on this client.

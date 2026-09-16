@@ -9,18 +9,28 @@ use SConcur\Features\Redis\Pipeline;
 
 /**
  * What `Redis::pipeline()` and `Redis::transaction()` hand to their callback: commands
- * called on it the predis way are collected, and nothing is sent until the batch is.
+ * called on it are collected, and nothing is sent until the batch is.
+ *
+ * The calls take phpredis's signatures, the way the object phpredis hands a pipeline callback
+ * does, and the replies come back in phpredis's shape (PhpRedisArguments, PhpRedisReplies).
  *
  * With a callback the batch is sent as soon as the callback returns, and the replies are
  * what the call answers with. Without one the batch itself is returned, and `exec()` sends
- * it. A command that fails while it runs takes its own place among the replies as a
- * `SConcur\Features\Redis\Dto\ErrorReply`, and the others run — in a transaction too. A
- * command the server refuses while a transaction is being queued is different: EXEC answers
- * EXECABORT, none of the commands run, and the call throws.
+ * it. A command that fails while it runs takes its own place among the replies as `false`,
+ * as in phpredis, and the others run — in a transaction too. A command the server refuses
+ * while a transaction is being queued is different: EXEC answers EXECABORT, none of the
+ * commands run, and the call throws.
  */
 class CommandBatch
 {
     private bool $collecting = false;
+
+    /**
+     * The command each reply answers, in order, so the replies can be put in phpredis's shape.
+     *
+     * @var list<array{string, list<mixed>}>
+     */
+    private array $commands = [];
 
     public function __construct(
         protected readonly Pipeline $pipeline,
@@ -33,15 +43,22 @@ class CommandBatch
      */
     public function command(string $method, array $parameters = []): static
     {
-        UnsupportedCalls::assertSupported($method);
+        [$name, $arguments] = PhpRedisArguments::build(
+            method: $method,
+            parameters: $parameters,
+        );
+
+        UnsupportedCalls::assertSupported($name);
 
         $this->pipeline->command(
-            name: strtoupper($method),
-            arguments: CommandArguments::flatten(
-                command: $method,
-                parameters: $parameters,
-            ),
+            name: $name,
+            arguments: $arguments,
         );
+
+        $this->commands[] = [
+            $name,
+            $arguments,
+        ];
 
         return $this;
     }
@@ -80,7 +97,25 @@ class CommandBatch
             return [];
         }
 
-        return $this->pipeline->execute(atomic: $this->atomic);
+        $commands = $this->commands;
+
+        $replies = $this->pipeline->execute(atomic: $this->atomic);
+
+        $this->commands = [];
+
+        $shaped = [];
+
+        foreach ($replies as $position => $reply) {
+            [$name, $arguments] = $commands[$position] ?? ['', []];
+
+            $shaped[] = PhpRedisReplies::shape(
+                command: $name,
+                arguments: $arguments,
+                reply: $reply,
+            );
+        }
+
+        return $shaped;
     }
 
     /**

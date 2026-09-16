@@ -15,7 +15,6 @@ use SConcur\Exceptions\Redis\InvalidRedisArgumentException;
 use SConcur\Exceptions\Redis\NestedPipelineExecutionException;
 use SConcur\Exceptions\Redis\RedisCommandException;
 use SConcur\Features\Redis\Connection as RedisClient;
-use SConcur\Features\Redis\Dto\ErrorReply;
 use SConcur\Features\Sleeper\Sleeper;
 use SConcur\Laravel\Redis\CommandBatch;
 use SConcur\Laravel\Redis\Connection;
@@ -42,14 +41,14 @@ class FacadeTest extends BaseRedisTestCase
         self::assertInstanceOf(RedisClient::class, $this->redis()->client());
     }
 
-    /** The spelling RedisLock uses: options as trailing arguments, the reply as the server sent it. */
+    /** The spelling RedisLock uses, answered the way PhpRedisConnection answers it. */
     #[Test]
-    public function aMagicCallIsARawCommand(): void
+    public function aMagicCallAnswersLikePhpRedis(): void
     {
         $redis = $this->redis();
 
-        self::assertSame('OK', $this->callMagic($redis, 'set', 'greeting', 'hello', 'EX', 60, 'NX'));
-        self::assertNull($this->callMagic($redis, 'set', 'greeting', 'again', 'EX', 60, 'NX'));
+        self::assertTrue($this->callMagic($redis, 'set', 'greeting', 'hello', 'EX', 60, 'NX'));
+        self::assertFalse($this->callMagic($redis, 'set', 'greeting', 'again', 'EX', 60, 'NX'));
         self::assertSame('hello', $this->callMagic($redis, 'get', 'greeting'));
         self::assertSame(1, $this->callMagic($redis, 'del', 'greeting'));
         self::assertNull($this->callMagic($redis, 'get', 'greeting'));
@@ -60,7 +59,7 @@ class FacadeTest extends BaseRedisTestCase
     {
         $redis = $this->redis();
 
-        self::assertSame('OK', $this->callMagic($redis, 'mset', ['first' => 'one', 'second' => 'two']));
+        self::assertTrue($this->callMagic($redis, 'mset', ['first' => 'one', 'second' => 'two']));
         self::assertSame(['one', 'two', null], $this->callMagic($redis, 'mget', ['first', 'second', 'third']));
         self::assertSame(2, $this->callMagic($redis, 'del', ['first', 'second']));
     }
@@ -98,12 +97,12 @@ class FacadeTest extends BaseRedisTestCase
             $this->callMagic($pipe, 'get', 'a');
         });
 
-        self::assertSame(['OK', 2, '2'], $replies);
+        self::assertSame([true, 2, '2'], $replies);
     }
 
-    /** A failed command takes its own place; the others still ran. */
+    /** A failed command takes its own place as false, as in phpredis; the others still ran. */
     #[Test]
-    public function aFailedCommandInAPipelineIsAnErrorReply(): void
+    public function aFailedCommandInAPipelineIsFalse(): void
     {
         $redis = $this->redis();
 
@@ -114,9 +113,7 @@ class FacadeTest extends BaseRedisTestCase
             $pipe->command('set', ['after', 'ran']);
         });
 
-        self::assertIsArray($replies);
-        self::assertInstanceOf(ErrorReply::class, $replies[0]);
-        self::assertSame('OK', $replies[1]);
+        self::assertSame([false, true], $replies);
         self::assertSame('ran', $redis->command('get', ['after']));
     }
 
@@ -141,7 +138,7 @@ class FacadeTest extends BaseRedisTestCase
         $this->callMagic($batch, 'set', 'a', 'b');
         $this->callMagic($batch, 'get', 'a');
 
-        self::assertSame(['OK', 'b'], $batch->exec());
+        self::assertSame([true, 'b'], $batch->exec());
     }
 
     #[Test]
@@ -404,10 +401,11 @@ class FacadeTest extends BaseRedisTestCase
 
         $redis->command('xadd', ['stream', '*', 'field', 'value']);
 
-        $reply = $redis->command('xread', ['BLOCK', 6000, 'STREAMS', 'stream', '0']);
+        $reply = $redis->command('xread', [['stream' => '0'], -1, 6000]);
 
         self::assertIsArray($reply);
-        self::assertNull($redis->command('xread', ['BLOCK', 100, 'STREAMS', 'stream', '$']));
+        self::assertFalse($redis->command('xread', [['stream' => '$'], -1, 100]));
+        self::assertFalse($redis->executeRaw(['XREAD', 'BLOCK', 100, 'STREAMS', 'stream', '$']));
     }
 
     /** A command failing while it runs does not stop the others — in a transaction too. */
@@ -423,9 +421,7 @@ class FacadeTest extends BaseRedisTestCase
             $transaction->command('set', ['after', 'ran']);
         });
 
-        self::assertIsArray($replies);
-        self::assertInstanceOf(ErrorReply::class, $replies[0]);
-        self::assertSame('OK', $replies[1]);
+        self::assertSame([false, true], $replies);
         self::assertSame('ran', $redis->command('get', ['after']));
     }
 
@@ -446,7 +442,7 @@ class FacadeTest extends BaseRedisTestCase
             self::assertStringContainsString('EXECABORT', $exception->getMessage());
         }
 
-        self::assertNull($redis->command('get', ['before']));
+        self::assertFalse($redis->command('get', ['before']));
     }
 
     #[Test]
@@ -476,6 +472,43 @@ class FacadeTest extends BaseRedisTestCase
 
         self::assertSame('ran', $outcome);
         self::assertLessThan(150, $longestStallMs);
+    }
+
+    /**
+     * phpredis answers a refused command with false and keeps the reason; this client throws
+     * it. A caller would otherwise read `false` as an answer, and a WRONGTYPE as a missing key.
+     */
+    #[Test]
+    public function aRefusedCommandThrowsWherePhpRedisAnswersFalse(): void
+    {
+        $redis = $this->redis();
+
+        $redis->command('set', ['text', 'not a number']);
+
+        $this->expectException(RedisCommandException::class);
+
+        $this->callMagic($redis, 'incr', 'text');
+    }
+
+    /** phpredis moves the cursor through a reference; here it is part of the answer. */
+    #[Test]
+    public function theScanFamilyAnswersTheCursorAndTheItems(): void
+    {
+        $redis = $this->redis();
+
+        $redis->client()->hSet('hash', ['field' => 'value']);
+        $redis->command('zadd', ['ranking', 1.5, 'first']);
+
+        self::assertSame(['0', ['hash']], $redis->scan(0, ['match' => 'ha*', 'count' => 100]));
+        self::assertSame(['0', ['field' => 'value']], $redis->hscan('hash', 0));
+        self::assertSame(['0', ['first' => 1.5]], $redis->zscan('ranking', 0));
+    }
+
+    /** A status and a bulk string arrive alike, so a script's status reply stays a string. */
+    #[Test]
+    public function aStatusFromAScriptStaysAString(): void
+    {
+        self::assertSame('OK', $this->redis()->eval("return redis.call('set', KEYS[1], 'x')", 1, 'key'));
     }
 
     private function callMagic(object $target, string $method, mixed ...$arguments): mixed
