@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "d696501d2860793e58eb0a9f00d4a774",
+    "content-hash": "dc42fe098a64f3b875b4f3b57eb23a63",
     "packages": [
         {
             "name": "brick/math",
@@ -3187,16 +3187,16 @@
         },
         {
             "name": "sconcur/sconcur",
-            "version": "0.12.2",
+            "version": "0.13.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/sprust/sconcur.git",
-                "reference": "ada0bc6e2f43694a9264438b1b8caa3c128e737b"
+                "reference": "4f5aecd40b028fc0d83e3915c59befc89f97a33b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sprust/sconcur/zipball/ada0bc6e2f43694a9264438b1b8caa3c128e737b",
-                "reference": "ada0bc6e2f43694a9264438b1b8caa3c128e737b",
+                "url": "https://api.github.com/repos/sprust/sconcur/zipball/4f5aecd40b028fc0d83e3915c59befc89f97a33b",
+                "reference": "4f5aecd40b028fc0d83e3915c59befc89f97a33b",
                 "shasum": ""
             },
             "require": {
@@ -3209,6 +3209,7 @@
             "require-dev": {
                 "ext-amqp": "2.2.0",
                 "ext-mongodb": "^1.21",
+                "ext-redis": "6.3.0",
                 "friendsofphp/php-cs-fixer": "^3.91",
                 "mongodb/mongodb": "^1.21",
                 "nyholm/psr7": "^1.8",
@@ -3246,9 +3247,9 @@
             "description": "PHP concurrency library backed by an extension written in Rust",
             "support": {
                 "issues": "https://github.com/sprust/sconcur/issues",
-                "source": "https://github.com/sprust/sconcur/tree/v0.12.2"
+                "source": "https://github.com/sprust/sconcur/tree/v0.13.1"
             },
-            "time": "2026-09-05T15:32:08+00:00"
+            "time": "2026-09-16T19:53:16+00:00"
         },
         {
             "name": "symfony/clock",

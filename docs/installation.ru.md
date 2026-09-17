@@ -2,8 +2,8 @@
 
 # Установка
 
-Девять шагов от пустого приложения до мастера, отдающего запросы. Шаги 6 и 7
-необязательны: они добавляют неблокирующее соединение с MySQL и драйвер очереди, а
+Десять шагов от пустого приложения до мастера, отдающего запросы. Шаги 6, 7 и 8
+необязательны: они добавляют неблокирующее соединение с MySQL, драйвер очереди и Redis, а
 HTTP-сервер работает и без них. WebSocket-пул необязателен так же, и его настройка — в
 [websocket.ru.md](websocket.ru.md).
 
@@ -17,8 +17,9 @@ HTTP-сервер работает и без них. WebSocket-пул необя
 - [5. Каталоги рантайма](#5-каталоги-рантайма)
 - [6. Соединение `sconcur_mysql` (по желанию)](#6-соединение-sconcur_mysql-по-желанию)
 - [7. Очередь `sconcur_rabbitmq` (по желанию)](#7-очередь-sconcur_rabbitmq-по-желанию)
-- [8. Запуск](#8-запуск)
-- [9. Проверка](#9-проверка)
+- [8. Redis: клиент `sconcur` и кэш `sconcur_redis` (по желанию)](#8-redis-клиент-sconcur-и-кэш-sconcur_redis-по-желанию)
+- [9. Запуск](#9-запуск)
+- [10. Проверка](#10-проверка)
 
 ## Требования
 
@@ -26,13 +27,14 @@ HTTP-сервер работает и без них. WebSocket-пул необя
 |---|---|---|
 | PHP | 8.4, NTS | |
 | `ext-msgpack` | 3.0.1 | весь трафик через границу PHP↔расширение; жёсткое требование `sconcur/sconcur`, его проверяет composer |
-| расширение `sconcur` | 0.12.2 | ровно версия `sconcur/sconcur`, ставится отдельно (шаг 2) |
+| расширение `sconcur` | 0.13.1 | ровно версия `sconcur/sconcur`, ставится отдельно (шаг 2) |
 | `ext-pcntl` | — | graceful-остановка мастера и долгоживущих воркеров |
 | MySQL | 8.4 | только под соединение `sconcur_mysql` |
 | RabbitMQ | 4.1 | только под очередь `sconcur_rabbitmq` |
+| Redis | 8.2 | только под Redis-клиент `sconcur` и кэш-стор `sconcur_redis` |
 
 `.so` и PHP-сторона пересекают границу протокола, которая меняется вместе с версией,
-поэтому `sconcur/sconcur` закреплён точно (`0.12.2`), а не кареткой, а расширение должно
+поэтому `sconcur/sconcur` закреплён точно (`0.13.1`), а не кареткой, а расширение должно
 совпадать с ним ровно: разошедшуюся версию оно отвергает на загрузке, а не работает
 как-нибудь.
 
@@ -45,7 +47,8 @@ composer require sconcur/laravel
 Провайдер `SConcur\Laravel\SConcurServiceProvider` подхватывается автообнаружением
 (`extra.laravel.providers` в `composer.json` пакета) — в `bootstrap/providers.php` его
 дописывать не нужно. Он регистрирует артизан-команды, драйвер очереди
-`sconcur_rabbitmq`, драйвер БД `sconcur_mysql`, пул задач и корутинные адаптеры.
+`sconcur_rabbitmq`, драйвер БД `sconcur_mysql`, Redis-клиент `sconcur`, кэш-стор
+`sconcur_redis`, пул задач и корутинные адаптеры.
 
 ## 2. Расширение `sconcur.so`
 
@@ -228,7 +231,51 @@ php artisan sconcur:rabbitmq:declare
 routing key, к которому никто не привязан) и крутить пул в цикле рестартов на `404`.
 Разбор — в [queue.ru.md](queue.ru.md).
 
-## 8. Запуск
+## 8. Redis: клиент `sconcur` и кэш `sconcur_redis` (по желанию)
+
+Соединения описываются в секции `redis` файла `config/database.php` отдельными полями, и
+секция выписывается целиком: в записях самого фреймворка есть `max_retries` и `backoff_*`, а
+клиент от них отказывается. `prefix` сохраняется и ставится на ключи так же, как это делает
+phpredis; приложению, которое переходит с phpredis, — раздел
+[«Переход с phpredis»](redis.ru.md#переход-с-phpredis).
+
+```php
+// config/database.php
+'redis' => [
+    'client' => env('REDIS_CLIENT', 'sconcur'),
+
+    'default' => [
+        'host'     => env('REDIS_HOST', '127.0.0.1'),
+        'port'     => env('REDIS_PORT', '6379'),
+        'password' => env('REDIS_PASSWORD'),
+        'database' => env('REDIS_DB', '0'),
+    ],
+
+    'cache' => [
+        'host'     => env('REDIS_HOST', '127.0.0.1'),
+        'port'     => env('REDIS_PORT', '6379'),
+        'password' => env('REDIS_PASSWORD'),
+        'database' => env('REDIS_CACHE_DB', '1'),
+    ],
+],
+```
+
+```php
+// config/cache.php
+'stores' => [
+    'sconcur_redis' => [
+        'driver'          => 'sconcur_redis',
+        'connection'      => 'cache',
+        'lock_connection' => 'default',
+    ],
+],
+```
+
+`CACHE_STORE=sconcur_redis` делает его стором по умолчанию. От `redis.client` стор не
+зависит, так что фасад может остаться на другом клиенте. Ключи, отказы и ограничения — в
+[redis.ru.md](redis.ru.md).
+
+## 9. Запуск
 
 Мастер — один процесс, который держит все пулы: `http`, `rabbitmq`, `ws` и `tasks`, — и
 именно его запускает супервизор:
@@ -269,7 +316,7 @@ WebSocket-пулу нужен второй `location` рядом с этим —
 Выкатка новой версии кода — `sconcur:servers:master:reload`: rolling restart воркеров,
 мастер остаётся жив. Отдельная группа обновляется через `--group=http`.
 
-## 9. Проверка
+## 10. Проверка
 
 ```bash
 php artisan sconcur:extension:status        # ready: yes

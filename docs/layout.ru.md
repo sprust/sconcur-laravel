@@ -12,6 +12,12 @@ src/Servers/                   — MasterRunner (обёртка над SConcur\W
 src/Queue/Rabbitmq/            — драйвер очереди и консьюмер-пул (Connector, Queue, Job, ConsumerRunner)
 src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам)
 src/Database/Mysql/            — соединение sconcur_mysql (Connector, Connection, Dsn, TransactionStack)
+src/Redis/                     — Redis-клиент sconcur (Connector, Connection, Dsn, CommandBatch,
+                                 CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,
+                                 PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
+src/Cache/Redis/               — кэш-стор sconcur_redis (Store, Lock, StoreFactory)
+src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер),
+                                 ProcessMemory (резидентная память процесса, RSS)
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — канал управления через кэш (stop/restart из другого контейнера)

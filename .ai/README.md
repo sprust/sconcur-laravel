@@ -29,6 +29,10 @@ events, router, translator and view are swapped for coroutine-safe adapters, and
 context is the process root — one store for one caller, which is what the stock
 implementations are.
 
+Beside the runtimes, the extension's features back Laravel drivers: `sconcur_mysql`
+(`src/Database/Mysql/`), the `sconcur` Redis client of `RedisManager` (`src/Redis/`) and
+the `sconcur_redis` cache store (`src/Cache/Redis/`).
+
 ## Further reading
 
 - [README.md](../README.md) / [README.ru.md](../README.ru.md) — the overview: what the
@@ -80,30 +84,32 @@ After `make setup` the demo application answers on `http://localhost:${APP_PORT}
 (48081 by default).
 
 `make test` needs the containers up: the tests load `sconcur.so` and the integration
-ones talk to the live MySQL and RabbitMQ.
+ones talk to the live MySQL, RabbitMQ and Redis.
 
 ## Environment
 
-Five containers, prefix `scl-`:
+Six containers, prefix `scl-`:
 
 - `nginx` — the only published entry point; proxies to the HTTP pool
 - `php` — CLI only (composer, artisan, phpunit, analyzers). There is no php-fpm in
-  this repository: HTTP is served by SConcur itself.
+  this repository: HTTP is served by SConcur itself. It alone carries phpredis
+  (`ext-redis`), for `PhpRedisParityTest`; `workers` and the package run without it.
 - `workers` — supervisor running `php demo/artisan sconcur:servers:master:start`
-- `mysql`, `rabbitmq` — **in-memory** (`tmpfs`), state is wiped when the container is
-  recreated. The named-volume mounts sit beside them, commented out.
+- `mysql`, `rabbitmq`, `redis` — **in-memory** (`tmpfs`), state is wiped when the container is
+  recreated. Redis runs with a password, so the client's login path is exercised. The named-volume mounts sit beside them, commented out.
 
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
 asset. **`composer.lock` must stay committed** — without it a fresh clone has nothing
-to pin against. The library version is pinned exactly (`0.12.2`, not a caret): the
+to pin against. The library version is pinned exactly (`0.13.1`, not a caret): the
 `.so` and the PHP side cross a protocol boundary that changes with the version.
 
 ## Architecture
 
 ```
 src/SConcurServiceProvider.php  — registers commands, the queue connector, the
-                                  sconcur_mysql driver, the task pool and the adapters
+                                  sconcur_mysql driver, the sconcur Redis client, the
+                                  sconcur_redis cache store, the task pool and the adapters
 src/Foundation/                 — AsyncApplication (coroutine-scoped container),
                                   ScopedService, ScopedServiceProxy
 src/Config/AsyncConfig          — config()->set overlay per coroutine
@@ -118,6 +124,17 @@ src/Queue/Rabbitmq/             — Connector, Queue, Job, ConsumerRunner
 src/Database/CoroutineTransactionsManager, TransactionStore
 src/Database/Mysql/             — Connector, Connection, Dsn, TransactionStack,
                                   TransactionState
+src/Redis/                      — Connector (the RedisManager client, and every Redis
+                                  config check), Connection (answers like Laravel's
+                                  PhpRedisConnection), PhpRedisArguments (phpredis
+                                  signatures), PhpRedisReplies (phpredis reply shapes),
+                                  KeyPrefix (where phpredis puts OPT_PREFIX),
+                                  Dsn, CommandBatch, CommandArguments (per-command array
+                                  spreading), BlockingCommands (deadlines of waiting
+                                  commands), UnsupportedCalls, Limiters/, Exceptions/
+src/Cache/Redis/                — Store, Lock (cooperative block()), StoreFactory
+src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
+src/Support/ProcessMemory       — the resident set size of the process, for memory limits
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
 src/Tasks/Control/              — stop/restart through a cache key, from any container
@@ -174,6 +191,54 @@ Points worth knowing before changing anything:
   the consumer generator on every idle wake to re-check the registry, and leaving it
   cancels the consumer — with `autoDelete` the broker drops the queue in that gap and the
   next consume takes the channel down with a 404.
+- **The `sconcur` Redis client refuses what the feature does not read, at build time.**
+  A maintainer decision: an unknown or unsupported key of a connection entry or of
+  `redis.options` (`max_retries`, `backoff_*`, `persistent`, `serializer`, …) throws
+  `UnsupportedRedisOptionException` unless switched off (`null`/`false`/`''`/`0`/`[]`); a
+  cluster throws `RedisClusterNotSupportedException`; `multi`/`exec`/`watch`/`select`/raw
+  `subscribe` throw `UnsupportedRedisCallException` with the replacement. Values the feature
+  would misread are refused too: a non-integer `database`/`port`/`*_ms`, `pool_size`
+  outside 1…64, a scheme in `host`, keys foreign to the scheme, a username without a
+  password (redis-rs then sends no AUTH — checked against the live server). The demo and the
+  workbench write their `redis` section out whole — `database` is merged with the
+  framework's file only under `connections`, so their section replaces the framework's,
+  whose entries would be refused.
+- **The cache store is not the framework's `RedisStore`.** `RedisStore::putMany()` calls
+  `multi()` and `exec()` as two calls, which on a connection shared by every coroutine is a
+  transaction a neighbour's commands land in, and the client refuses both. `Store` is written
+  on the feature's typed API and keeps `RedisStore`'s storage format. It builds its
+  connections through `Connector::clientForConnection()`, not `RedisManager`, so it works
+  whatever `redis.client` is — and checks `redis.options` only when that client is
+  `sconcur`, since under phpredis or predis the options are theirs.
+- **`CacheManager::extend()` and `RedisManager::extend()` bind the closure to the manager.**
+  Binding a `static` closure raises "Cannot bind an instance to a static closure", which the
+  framework turns into an `ErrorException`, so the closures handed to them in the provider
+  are not static, unlike the rest of the file.
+- **A retry loop must not pause with `usleep()`/`Sleep::usleep()` inside a coroutine** — it
+  freezes the worker. `Cache\Redis\Lock::block()` and the `Redis\Limiters\` subclasses pause
+  through `Support\CooperativeSleep`; the tests measure it with a ticker coroutine
+  (`BaseRedisTestCase::longestStallMs()`), and a test proves the measurement sees a native
+  pause.
+- **`Redis::` on the sconcur client must answer like `PhpRedisConnection`.** The facade is a
+  thin layer: past Laravel's ~25 overrides a call goes to phpredis's own method, so the
+  contract applications rely on is phpredis's signatures and reply shapes (status → `true`,
+  nil → `false`, 0/1 → `bool`, scores → `float`, `hgetall`/`WITHSCORES` → maps, `type` →
+  int). `Connection` mirrors the overrides, `PhpRedisArguments` reads phpredis signatures,
+  `PhpRedisReplies` shapes replies, and `PhpRedisParityTest` runs every case through a real
+  `PhpRedisConnection` (phpredis is installed in `scl-php` only) and requires `assertSame`.
+  To extend coverage, add a case there first and let it fail. Deliberate differences, pinned
+  in `FacadeTest`: a refused command throws instead of `false`; `scan`-family answers
+  `[cursor, items]`; a script's status reply stays `'OK'` (status and bulk arrive alike).
+- **The key prefix follows phpredis's `OPT_PREFIX`, quirks included** (`KeyPrefix`), so an
+  application moves over with its keys where they are. The table was taken from `MONITOR` on
+  phpredis, and `PhpRedisParityTest` runs every case again with a prefix on both clients and
+  compares the keys left in the database. `rawCommand`/`executeRaw` and `client()` get no
+  prefix; `SORT BY/GET/STORE` and `SCAN MATCH` get none either, as in phpredis. The cache
+  store puts the connection's prefix before its own whatever the facade's client is, which
+  is what makes it share keys and locks with `RedisStore` on phpredis.
+- **How an array argument is spread depends on the command** (`CommandArguments`): PHP
+  stores `['0' => 'a']` as a list, so the shape cannot decide. Pair commands spread
+  key/value, the phpredis signatures read their option arrays, the rest refuse a map.
 - **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
   the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;
   sqlx hardcodes that capability in its handshake, keeps `MySqlQueryResult` to two

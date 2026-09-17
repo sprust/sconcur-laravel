@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace SConcur\Laravel;
 
 use Illuminate\Broadcasting\BroadcastManager;
+use Illuminate\Cache\CacheManager;
+use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Container\Container;
@@ -16,6 +18,8 @@ use SConcur\Laravel\Console\ExtensionLoadCommand;
 use SConcur\Laravel\Console\ExtensionStatusCommand;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Queue\QueueManager;
+use Illuminate\Redis\RedisManager;
+use SConcur\Laravel\Cache\Redis\StoreFactory;
 use SConcur\Laravel\Console\HttpStartCommand;
 use SConcur\Laravel\Console\MasterReloadCommand;
 use SConcur\Laravel\Console\MasterStartCommand;
@@ -31,6 +35,7 @@ use SConcur\Laravel\Database\CoroutineTransactionsManager;
 use SConcur\Laravel\Database\Mysql\Connection as SconcurMysqlConnection;
 use SConcur\Laravel\Database\Mysql\Connector as SconcurMysqlConnector;
 use SConcur\Laravel\Queue\Rabbitmq\Connector;
+use SConcur\Laravel\Redis\Connector as RedisConnector;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
 use SConcur\Laravel\Tasks\CooperativeSleeper;
 use SConcur\Laravel\Tasks\TaskPoolLogger;
@@ -61,10 +66,11 @@ use SConcur\Laravel\Ws\WsPresenceOptions;
  * Laravel service provider for the SConcur integration.
  *
  * Always: registers the artisan commands, the `sconcur_rabbitmq` queue connector, the
- * `sconcur_mysql` database driver and the coroutine-scoped transactions manager. None of
- * them depends on the process being a coroutine one — the SQL feature works synchronously
- * too, so which connection an application uses is its own choice, made in
- * config/database.php like any other.
+ * `sconcur_mysql` database driver, the `sconcur` Redis client, the `sconcur_redis` cache
+ * store and the coroutine-scoped transactions manager. None of them depends on the process
+ * being a coroutine one — the features work synchronously too, so which connection an
+ * application uses is its own choice, made in config/database.php and config/cache.php
+ * like any other.
  *
  * The config is published, not merged. Merging would leave the package's own defaults
  * standing behind the application's file, so a value the application deleted would
@@ -109,6 +115,8 @@ class SConcurServiceProvider extends ServiceProvider
 
         $this->registerQueueConnector();
         $this->registerDatabaseDriver();
+        $this->registerRedisClient();
+        $this->registerCacheStore();
         $this->registerCoroutineTransactionsManager();
         $this->registerTaskPool();
         $this->registerWsPool();
@@ -325,6 +333,49 @@ class SConcurServiceProvider extends ServiceProvider
                 'sconcur_mysql',
                 static fn(array $config, string $name): SconcurMysqlConnection => (new SconcurMysqlConnector())->connect($config, $name),
             );
+        });
+    }
+
+    /**
+     * Registers the `sconcur` client of RedisManager, chosen by `database.redis.client`.
+     *
+     * callAfterResolving() rather than resolving(): an application that has already resolved
+     * `redis` by the time this provider registers would otherwise never see the client.
+     * The closure handed to extend() is not static on purpose — the manager binds it to
+     * itself, and binding a static closure raises a warning the framework turns into an
+     * exception.
+     */
+    private function registerRedisClient(): void
+    {
+        $this->callAfterResolving('redis', static function (RedisManager $redisManager): void {
+            $redisManager->extend(RedisConnector::CLIENT, function (): RedisConnector {
+                return new RedisConnector();
+            });
+        });
+    }
+
+    /**
+     * Registers the `sconcur_redis` cache store.
+     *
+     * The store builds its connections from `database.redis` itself rather than through
+     * RedisManager, so it is on the feature whichever client the facade uses. The closure
+     * is not static for the same reason as the Redis client's.
+     */
+    private function registerCacheStore(): void
+    {
+        $this->callAfterResolving('cache', static function (CacheManager $cacheManager): void {
+            $cacheManager->extend('sconcur_redis', function (Container $app, array $config) use ($cacheManager): Repository {
+                $appConfig = $app->make('config');
+
+                $store = (new StoreFactory(connector: new RedisConnector()))->make(
+                    config: $config,
+                    redis: (array) $appConfig->get('database.redis', []),
+                    prefix: (string) ($config['prefix'] ?? $appConfig->get('cache.prefix', '')),
+                    serializableClasses: $appConfig->get('cache.serializable_classes'),
+                );
+
+                return $cacheManager->repository($store, $config);
+            });
         });
     }
 

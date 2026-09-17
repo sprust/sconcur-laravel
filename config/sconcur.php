@@ -334,6 +334,9 @@ return [
 
         // A leak anywhere in the process takes every task down with it, so the limit is
         // the pool's. Passing it is a graceful stop, and the supervisor starts a fresh one.
+        // It is compared against the larger of the PHP heap and the process's RSS, so the
+        // memory the extension holds counts too — and so does the process's own baseline,
+        // about 60 MiB for an application with the extension loaded.
         'memory_mb'   => (int) env('SCONCUR_TASKS_MEMORY_MB', 256),
 
         // How finely a pause is cut, which is how fast the pool notices a signal: a

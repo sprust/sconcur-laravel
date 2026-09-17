@@ -18,6 +18,7 @@ application sets its own.
 - [The WebSocket server](#the-websocket-server)
 - [The WebSocket protocol](#the-websocket-protocol)
 - [The task pool](#the-task-pool)
+- [Redis](#redis)
 
 ## General
 
@@ -188,7 +189,7 @@ How the pool works is in [task-pool.md](task-pool.md).
 |---|---|---|
 | `SCONCUR_TASKS_CONTROL_KEY` | `sconcur:tasks:control` | the cache key `stop` and `restart` reach the pool through |
 | `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | flock path; keeps a second copy of a task from starting |
-| `SCONCUR_TASKS_MEMORY_MB` | `256` | process memory limit; past it, an exit with `EXIT_RESTART` |
+| `SCONCUR_TASKS_MEMORY_MB` | `256` | process memory limit, against the larger of the PHP heap and RSS; past it, an exit with `EXIT_RESTART` |
 | `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | how finely a pause is cut, that is how fast the pool notices a signal |
 | `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `1000` | automatic coroutine switching; `0` — off |
 | `SCONCUR_TASKS_REPORT_TICKS` | `true` | show the ticks in the panel's `consumers` section |
@@ -198,3 +199,10 @@ How the pool works is in [task-pool.md](task-pool.md).
 The pool's group is one worker and declares `restartPolicy: on-failure` rather than
 inheriting the master's `always`, so that a `sconcur:tasks:stop`, which exits zero, is not
 undone by a replacement within the second.
+
+## Redis
+
+The `sconcur` client and the `sconcur_redis` cache store read no ENV of their own. Their
+settings are keys of the `redis` section of `config/database.php` and of
+`cache.stores.sconcur_redis`, and the application fills them from whatever variables it
+likes; the keys are in [redis.md](redis.md).

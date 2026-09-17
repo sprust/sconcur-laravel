@@ -18,10 +18,11 @@ After that the demo answers on `http://localhost:48081` (the port is `APP_PORT` 
 | Container | Role |
 |---|---|
 | `scl-nginx` | the only published entry point; proxies to the `http` pool |
-| `scl-php` | CLI only: composer, artisan, phpunit, the analyzers. There is no php-fpm here — HTTP is served by SConcur itself |
+| `scl-php` | CLI only: composer, artisan, phpunit, the analyzers. There is no php-fpm here — HTTP is served by SConcur itself. phpredis is installed here, and only here, for the tests that compare the `sconcur` Redis client with it |
 | `scl-workers` | supervisor, and under it the SConcur master with the `http`, `rabbitmq`, `ws` and `tasks` groups |
 | `scl-mysql` | MySQL 8.4, data in `tmpfs` — wiped when the container is recreated |
 | `scl-rabbitmq` | RabbitMQ 4.1 with its panel, in `tmpfs` as well |
+| `scl-redis` | Redis 8.2 with a password, in `tmpfs` as well; the demo's cache store and `Redis::` |
 
 The `sconcur.so` extension is baked into the image: `docker/php/Dockerfile` reads the
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release asset.
@@ -49,7 +50,7 @@ make test c=--filter=DsnTest          # a single test
 ```
 
 The tests need the environment up: they load `sconcur.so`, and the integration ones talk
-to the live MySQL and RabbitMQ.
+to the live MySQL, RabbitMQ and Redis.
 
 ## The tests and the demo are different applications
 

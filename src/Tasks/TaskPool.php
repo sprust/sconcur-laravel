@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use SConcur\Exceptions\CoroutineTimeoutException;
 use SConcur\Exceptions\FlowStoppedException;
+use SConcur\Laravel\Support\ProcessMemory;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
 use SConcur\Scheduler\Scheduler;
 use SConcur\WaitGroup;
@@ -41,6 +42,7 @@ class TaskPool
         protected TaskPoolOptions $options,
         protected TaskPoolLogger $logger,
         protected ExceptionHandler $exceptions,
+        protected ProcessMemory $processMemory = new ProcessMemory(),
     ) {
     }
 
@@ -95,9 +97,12 @@ class TaskPool
      */
     protected function serve(array $names, int $masterPid = 0): int
     {
-        $state      = new TaskPoolState($names);
-        $metrics    = $this->options->reportTicks ? new TaskPoolMetrics(count($names)) : null;
-        $telemetry  = TaskPoolTelemetry::fromEnvironment($metrics);
+        $state     = new TaskPoolState($names);
+        $metrics   = $this->options->reportTicks ? new TaskPoolMetrics(count($names)) : null;
+        $telemetry = TaskPoolTelemetry::fromEnvironment(
+            metrics: $metrics,
+            processMemory: $this->processMemory,
+        );
         $controller = new TaskPoolController(
             state: $state,
             registry: $this->registry,
@@ -107,6 +112,7 @@ class TaskPool
             logger: $this->logger,
             masterPid: $masterPid,
             telemetry: $telemetry,
+            processMemory: $this->processMemory,
         );
 
         $restoreSignals = $this->installSignalHandlers($controller);

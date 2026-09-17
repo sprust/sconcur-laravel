@@ -14,6 +14,9 @@ The `sconcur_mysql` connection gives the ORM non-blocking MySQL and per-coroutin
 transactions. The PDO-backed `mysql` connection has a transaction limit of its own — see
 [Database](docs/database.md).
 
+The `sconcur` client puts `Redis::` on SConcur's Redis feature, and the `sconcur_redis`
+cache store puts `Cache::` there — see [Redis](docs/redis.md).
+
 ## Why
 
 SConcur runs every HTTP request in its own PHP Fiber, concurrently, in one process.
@@ -34,6 +37,7 @@ TrueAsync context). The worker's PSR-7 bridge follows Laravel Octane's model.
 | [Layout](docs/layout.md) | what lies where in the repository |
 | [Configuration (ENV)](docs/configuration.md) | every environment variable and its default |
 | [Database](docs/database.md) | the `sconcur_mysql` connection, per-coroutine transactions, and the PDO connection's limit |
+| [Redis](docs/redis.md) | the `sconcur` Redis client, the `sconcur_redis` cache store, and what they refuse |
 | [Queue](docs/queue.md) | the `sconcur_rabbitmq` driver and the consumer pool |
 | [WebSocket](docs/websocket.md) | the ws pool: examples, the protocol, channel signatures, the bus, presence |
 | [The task pool](docs/task-pool.md) | periodic tasks, a coroutine each |

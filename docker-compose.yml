@@ -34,6 +34,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./:/app
       - ./docker/php/conf/php.ini:/usr/local/etc/php/conf.d/docker.ini
@@ -42,7 +44,7 @@ services:
     command: ["sh", "-c", "echo \"Starting infinite wait loop...\"; while sleep 1; do :; done"]
 
   # Supervisor keeps the SConcur master up; the master keeps its own pools up — http,
-  # rabbitmq and tasks, one group each (demo/config/sconcur.php).
+  # rabbitmq, ws and tasks, one group each (demo/config/sconcur.php).
   workers:
     container_name: scl-workers
     restart: unless-stopped
@@ -59,6 +61,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       # The master's telemetry panel. The http pool's own port stays unpublished:
       # nginx is what reaches it.
@@ -74,7 +78,7 @@ services:
     entrypoint: ["/app/docker/workers/entrypoint.sh"]
     command: supervisord -n
 
-  # Both backends keep their data in tmpfs: the demo and the tests start from a clean
+  # Every backend keeps its data in tmpfs: the demo and the tests start from a clean
   # state on every recreate, and nothing accumulates on disk. To run against real
   # disk-backed storage instead, comment the tmpfs block, uncomment the named-volume
   # mount and the top-level `volumes:` section.
@@ -121,6 +125,27 @@ services:
     # volumes:
     #   - rabbitmq-data:/var/lib/rabbitmq
 
+  # The cache store and the Redis facade of the demo. A password on purpose, so the login
+  # the client builds out of REDIS_USERNAME/REDIS_PASSWORD is exercised on every run.
+  redis:
+    container_name: scl-redis
+    restart: unless-stopped
+    image: redis:8.2-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "no", "--save", ""]
+    ports:
+      - ${REDIS_DOCKER_PORT:-36379}:6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    tmpfs:
+      - /data:rw,noexec,nosuid,size=256m
+    # volumes:
+    #   - redis-data:/data
+
 # volumes:
 #   mysql-data:
 #   rabbitmq-data:
+#   redis-data:

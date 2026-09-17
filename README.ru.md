@@ -14,6 +14,9 @@ HTTP-воркер и coroutine-scoped приложение.
 У соединения `mysql` поверх PDO есть своё ограничение на транзакции — см.
 [Базу данных](docs/database.ru.md).
 
+Клиент `sconcur` переводит `Redis::` на фичу Redis из SConcur, а кэш-стор `sconcur_redis` —
+`Cache::` — см. [Redis](docs/redis.ru.md).
+
 ## Зачем
 
 SConcur исполняет каждый HTTP-запрос в отдельном PHP-Fiber конкурентно в одном процессе.
@@ -34,6 +37,7 @@ Coroutine-scoped модель (`AsyncApplication` плюс состояние н
 | [Структура](docs/layout.ru.md) | что где лежит в репозитории |
 | [Конфигурация (ENV)](docs/configuration.ru.md) | все переменные окружения и их дефолты |
 | [База данных](docs/database.ru.md) | соединение `sconcur_mysql`, транзакции на корутину и ограничение PDO-соединения |
+| [Redis](docs/redis.ru.md) | Redis-клиент `sconcur`, кэш-стор `sconcur_redis` и то, от чего они отказываются |
 | [Очередь](docs/queue.ru.md) | драйвер `sconcur_rabbitmq` и пул консьюмеров |
 | [WebSocket](docs/websocket.ru.md) | ws-пул: примеры, протокол, подписи каналов, шина, presence |
 | [Пул задач](docs/task-pool.ru.md) | периодические задачи, по корутине на каждую |

@@ -6,6 +6,7 @@ namespace SConcur\Laravel\Tasks;
 
 use SConcur\Laravel\Tasks\Control\ControlActionEnum;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
+use SConcur\Laravel\Support\ProcessMemory;
 use SConcur\Laravel\Tasks\Control\ControlCommandDto;
 use SConcur\WaitGroup;
 
@@ -41,6 +42,7 @@ class TaskPoolController
         protected TaskPoolLogger $logger,
         protected int $masterPid = 0,
         protected ?TaskPoolTelemetry $telemetry = null,
+        protected ProcessMemory $processMemory = new ProcessMemory(),
     ) {
         $this->handledUpTo = $state->startedAt();
     }
@@ -164,6 +166,11 @@ class TaskPoolController
      * A leak in one task takes the whole process down, so the limit is the pool's, not
      * the task's. It goes through the same stop as everything else and the supervisor
      * brings a fresh process up.
+     *
+     * The limit is compared against the larger of the PHP heap and the resident set size.
+     * The heap alone misses everything the extension allocates, and a native leak would
+     * grow the process until the container runs out of memory without ever tripping it.
+     * Where /proc is not available the RSS reads as zero and the heap decides alone.
      */
     protected function checkMemory(): void
     {
@@ -171,13 +178,19 @@ class TaskPoolController
             return;
         }
 
-        $used = memory_get_usage(true);
+        $heapBytes = memory_get_usage(true);
+        $rssBytes  = $this->processMemory->rssBytes();
 
-        if ($used < $this->options->memoryLimitBytes()) {
+        $figure    = $rssBytes > $heapBytes ? 'rss' : 'heap';
+        $usedBytes = max($heapBytes, $rssBytes);
+
+        if ($usedBytes < $this->options->memoryLimitBytes()) {
             return;
         }
 
-        $this->log(sprintf('memory limit reached (%d MiB) — stopping', intdiv($used, 1024 * 1024)));
+        $this->log(
+            sprintf('memory limit reached (%s %d MiB) — stopping', $figure, intdiv($usedBytes, 1024 * 1024)),
+        );
 
         $this->restartWanted = true;
 

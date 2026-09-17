@@ -32,6 +32,7 @@ flowchart TB
     ws["группа ws — 1 воркер"]
     mysql["MySQL"]
     broker["RabbitMQ"]
+    redis["Redis"]
 
     browser -->|"HTTP"| nginx
     browser <-->|"WebSocket: upgrade и кадры"| nginx
@@ -48,6 +49,7 @@ flowchart TB
     rabbit -->|"job_results"| mysql
     tasks -->|"heartbeats"| mysql
     ws -->|"по одной exclusive-очереди на воркер"| broker
+    tasks -->|"канал управления, кэш поверх sconcur_redis"| redis
 ```
 
 Все четыре группы — пулы одного мастера, описанные в `demo/config/sconcur.php`.
@@ -55,10 +57,11 @@ flowchart TB
 
 ## Состояние после рестарта
 
-MySQL и RabbitMQ держат данные в tmpfs, поэтому остановка любого из контейнеров уносит
-схему и очередь. Контейнер workers перед стартом мастера мигрирует и объявляет очереди из
-своего entrypoint, так что рестарт чинит себя сам — обе команды идемпотентны, а сбой в них
-сообщается, не роняя контейнер. Руками — `make demo-reset`.
+MySQL, RabbitMQ и Redis держат данные в tmpfs, поэтому остановка MySQL или RabbitMQ уносит
+схему и очередь, а остановка Redis очищает кэш. Контейнер workers перед стартом мастера
+мигрирует и объявляет очереди из своего entrypoint, так что рестарт чинит себя сам — обе
+команды идемпотентны, а сбой в них сообщается, не роняя контейнер. Руками —
+`make demo-reset`.
 
 ## Эндпоинты
 

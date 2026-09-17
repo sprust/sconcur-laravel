@@ -2,9 +2,9 @@ English | [Русский](installation.ru.md)
 
 # Installation
 
-Nine steps from an empty application to a master serving requests. Steps 6 and 7 are
-optional: they add the non-blocking MySQL connection and the queue driver, and the HTTP
-server runs without either. The WebSocket pool is optional in the same way and is set up
+Ten steps from an empty application to a master serving requests. Steps 6, 7 and 8 are
+optional: they add the non-blocking MySQL connection, the queue driver and Redis, and the
+HTTP server runs without any of them. The WebSocket pool is optional in the same way and is set up
 in [websocket.md](websocket.md).
 
 ## Table of contents
@@ -17,8 +17,9 @@ in [websocket.md](websocket.md).
 - [5. Runtime directories](#5-runtime-directories)
 - [6. The `sconcur_mysql` connection (optional)](#6-the-sconcur_mysql-connection-optional)
 - [7. The `sconcur_rabbitmq` queue (optional)](#7-the-sconcur_rabbitmq-queue-optional)
-- [8. Running it](#8-running-it)
-- [9. Checking it](#9-checking-it)
+- [8. Redis: the `sconcur` client and the `sconcur_redis` cache (optional)](#8-redis-the-sconcur-client-and-the-sconcur_redis-cache-optional)
+- [9. Running it](#9-running-it)
+- [10. Checking it](#10-checking-it)
 
 ## Requirements
 
@@ -26,13 +27,14 @@ in [websocket.md](websocket.md).
 |---|---|---|
 | PHP | 8.4, NTS | |
 | `ext-msgpack` | 3.0.1 | every payload crossing the PHP↔extension boundary; a hard requirement of `sconcur/sconcur`, enforced by composer |
-| the `sconcur` extension | 0.12.2 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
+| the `sconcur` extension | 0.13.1 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
 | `ext-pcntl` | — | graceful shutdown of the master and of every long-lived worker |
 | MySQL | 8.4 | only for the `sconcur_mysql` connection |
 | RabbitMQ | 4.1 | only for the `sconcur_rabbitmq` queue |
+| Redis | 8.2 | only for the `sconcur` Redis client and the `sconcur_redis` cache store |
 
 The `.so` and the PHP side cross a protocol boundary that changes with the version, so
-`sconcur/sconcur` is pinned exactly (`0.12.2`) rather than with a caret, and the
+`sconcur/sconcur` is pinned exactly (`0.13.1`) rather than with a caret, and the
 extension has to match it exactly: a version that drifted is rejected on load rather
 than working somehow.
 
@@ -45,7 +47,8 @@ composer require sconcur/laravel
 `SConcur\Laravel\SConcurServiceProvider` is found by auto-discovery
 (`extra.laravel.providers` in the package's `composer.json`) — there is nothing to add to
 `bootstrap/providers.php`. It registers the artisan commands, the `sconcur_rabbitmq` queue
-driver, the `sconcur_mysql` database driver, the task pool and the coroutine adapters.
+driver, the `sconcur_mysql` database driver, the `sconcur` Redis client, the `sconcur_redis`
+cache store, the task pool and the coroutine adapters.
 
 ## 2. The `sconcur.so` extension
 
@@ -232,7 +235,51 @@ Skipping it means losing jobs silently (a publish goes to the default exchange o
 routing key nothing is bound to) and spinning the pool through a restart loop on a `404`.
 The details are in [queue.md](queue.md).
 
-## 8. Running it
+## 8. Redis: the `sconcur` client and the `sconcur_redis` cache (optional)
+
+The connections go into the `redis` section of `config/database.php`, as separate fields,
+and the section is written out whole: the framework's own entries carry `max_retries` and
+`backoff_*`, which the client refuses. `prefix` is kept and put on the keys the way phpredis
+puts it; an application moving from phpredis follows
+[Moving from phpredis](redis.md#moving-from-phpredis).
+
+```php
+// config/database.php
+'redis' => [
+    'client' => env('REDIS_CLIENT', 'sconcur'),
+
+    'default' => [
+        'host'     => env('REDIS_HOST', '127.0.0.1'),
+        'port'     => env('REDIS_PORT', '6379'),
+        'password' => env('REDIS_PASSWORD'),
+        'database' => env('REDIS_DB', '0'),
+    ],
+
+    'cache' => [
+        'host'     => env('REDIS_HOST', '127.0.0.1'),
+        'port'     => env('REDIS_PORT', '6379'),
+        'password' => env('REDIS_PASSWORD'),
+        'database' => env('REDIS_CACHE_DB', '1'),
+    ],
+],
+```
+
+```php
+// config/cache.php
+'stores' => [
+    'sconcur_redis' => [
+        'driver'          => 'sconcur_redis',
+        'connection'      => 'cache',
+        'lock_connection' => 'default',
+    ],
+],
+```
+
+`CACHE_STORE=sconcur_redis` makes it the default store. The store does not depend on
+`redis.client`, so the facade may stay on another client. The keys, the refusals and the
+limits are in [redis.md](redis.md).
+
+## 9. Running it
 
 The master is one process holding every pool — `http`, `rabbitmq`, `ws` and `tasks` — and
 it is what the supervisor starts:
@@ -273,7 +320,7 @@ long read timeout — the block above would cut every socket loose once a minute
 New code is rolled out with `sconcur:servers:master:reload`: a rolling restart of the
 workers with the master left up. A single group is updated with `--group=http`.
 
-## 9. Checking it
+## 10. Checking it
 
 ```bash
 php artisan sconcur:extension:status        # ready: yes

@@ -33,4 +33,37 @@ return [
             'max_open_conns' => (int) env('DB_MAX_OPEN_CONNS', 20),
         ],
     ],
+
+    /*
+    | Replaces the framework's `redis` section whole rather than merging into it — only
+    | `connections` is merged — and has to: the framework's entries carry `max_retries` and
+    | `backoff_*`, which the sconcur client does not read and refuses.
+    |
+    | `timeout_ms`, `pool_size` and `conn_max_lifetime_ms` are the feature's own; left
+    | out, the extension's defaults stand (30000 ms, 4 connections, no lifetime limit).
+    */
+    'redis' => [
+        'client' => env('REDIS_CLIENT', 'sconcur'),
+
+        'default' => [
+            'url'        => env('REDIS_URL'),
+            'host'       => env('REDIS_HOST', '127.0.0.1'),
+            'port'       => env('REDIS_PORT', '6379'),
+            'username'   => env('REDIS_USERNAME'),
+            'password'   => env('REDIS_PASSWORD'),
+            'database'   => env('REDIS_DB', '0'),
+            'timeout_ms' => (int) env('REDIS_TIMEOUT_MS', 5000),
+        ],
+
+        // A database of its own: a cache flush empties the whole database it is in.
+        'cache' => [
+            'url'        => env('REDIS_URL'),
+            'host'       => env('REDIS_HOST', '127.0.0.1'),
+            'port'       => env('REDIS_PORT', '6379'),
+            'username'   => env('REDIS_USERNAME'),
+            'password'   => env('REDIS_PASSWORD'),
+            'database'   => env('REDIS_CACHE_DB', '1'),
+            'timeout_ms' => (int) env('REDIS_TIMEOUT_MS', 5000),
+        ],
+    ],
 ];
