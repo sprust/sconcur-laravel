@@ -43,8 +43,9 @@ jobs:
     # Draft PRs are skipped; marking one ready fires `ready_for_review` and runs them.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
 
-    # The integration tests talk to live backends, the same two the compose file raises
-    # locally. Ports and credentials match phpunit.xml.
+    # The integration tests talk to live backends, the same ones the compose file raises
+    # locally. Ports and credentials match phpunit.xml. Redis is started as a step below:
+    # a service container takes no command, and the server needs one for its password.
     services:
       mysql:
         image: mysql:8.4
@@ -74,10 +75,29 @@ jobs:
 
     env:
       DB_HOST: 127.0.0.1
+      REDIS_HOST: 127.0.0.1
       SCONCUR_RABBITMQ_DSN: amqp://scl_user:_scl_password_567@127.0.0.1:5672/%2f
 
     steps:
       - uses: actions/checkout@v6
+
+      # The same image and flags as docker-compose.yml, so the client's login path is
+      # exercised here too.
+      - name: Start Redis
+        run: |
+          docker run -d --name redis -p 6379:6379 redis:8.2-alpine \
+            redis-server --requirepass _scl_password_567 --appendonly no --save ""
+
+          for attempt in $(seq 1 30); do
+            if docker exec redis redis-cli -a _scl_password_567 --no-auth-warning ping | grep -qx PONG; then
+              exit 0
+            fi
+
+            sleep 1
+          done
+
+          echo "::error::Redis did not answer PING within 30 seconds."
+          exit 1
 
       - uses: shivammathur/setup-php@v2
         with:
