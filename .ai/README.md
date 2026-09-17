@@ -101,7 +101,7 @@ Six containers, prefix `scl-`:
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
 asset. **`composer.lock` must stay committed** — without it a fresh clone has nothing
-to pin against. The library version is pinned exactly (`0.13.0`, not a caret): the
+to pin against. The library version is pinned exactly (`0.13.1`, not a caret): the
 `.so` and the PHP side cross a protocol boundary that changes with the version.
 
 ## Architecture
