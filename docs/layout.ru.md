@@ -16,7 +16,8 @@ src/Redis/                     — Redis-клиент sconcur (Connector, Connec
                                  CommandArguments, BlockingCommands, PhpRedisArguments,
                                  PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
 src/Cache/Redis/               — кэш-стор sconcur_redis (Store, Lock, StoreFactory)
-src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер)
+src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер),
+                                 ProcessMemory (резидентная память процесса, RSS)
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — канал управления через кэш (stop/restart из другого контейнера)

@@ -133,6 +133,7 @@ src/Redis/                      — Connector (the RedisManager client, and ever
                                   commands), UnsupportedCalls, Limiters/, Exceptions/
 src/Cache/Redis/                — Store, Lock (cooperative block()), StoreFactory
 src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
+src/Support/ProcessMemory       — the resident set size of the process, for memory limits
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
 src/Tasks/Control/              — stop/restart through a cache key, from any container

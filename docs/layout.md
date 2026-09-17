@@ -16,7 +16,8 @@ src/Redis/                     — the sconcur Redis client (Connector, Connecti
                                  CommandArguments, BlockingCommands, PhpRedisArguments,
                                  PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
 src/Cache/Redis/               — the sconcur_redis cache store (Store, Lock, StoreFactory)
-src/Support/                   — CooperativeSleep (a retry pause that does not freeze the worker)
+src/Support/                   — CooperativeSleep (a retry pause that does not freeze the worker),
+                                 ProcessMemory (the resident set size of the process)
 src/Tasks/                     — the periodic task pool (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — the control channel through the cache (stop/restart from another container)

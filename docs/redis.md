@@ -130,6 +130,7 @@ The keys applications carry over most often, and why each is refused:
 | `persistent` | connections always outlive the request — they are pooled in the extension |
 | `name` | none: `CLIENT SETNAME` would rename a connection other coroutines share |
 | `serializer`, `compression` | none on the client; the cache store serializes by itself |
+| `protocol` | none: RESP3 changes the reply shape of several commands, and only RESP2 is supported |
 
 ## The facade
 
@@ -156,11 +157,18 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
   `brpop`, `spop`, `zadd`, `zrangebyscore`, `zrevrangebyscore`, `zinterstore`,
   `zunionstore`, `eval`, `evalsha`, `flushdb`, `executeRaw`, `pipeline`, `transaction`,
   `subscribe`, `psubscribe`.
-- Any other call is read with phpredis's signature. Where that signature takes an options
-  array or an order of its own, `SConcur\Laravel\Redis\PhpRedisArguments` reads it:
-  `zRange`/`zRevRange` with `true` or `['withscores', 'byscore', 'bylex', 'rev', 'limit']`,
-  `set` with a TTL or `['nx', 'ex' => 10]`, `lRem`, `sort`, `xAdd`, `xRead`, `lPos`,
-  `getEx`, `copy`, `rawCommand`. The other methods take the command's arguments in order.
+- Any other call is read with phpredis's signature, and so is every call through
+  `Redis::command()` and on the batch of a pipeline or a transaction. Where that signature
+  takes an options array or an order of its own, `SConcur\Laravel\Redis\PhpRedisArguments`
+  reads it: `zRange`/`zRevRange` with `true` or `['withscores', 'byscore', 'bylex', 'rev',
+  'limit']`, `zRangeByScore`/`zRevRangeByScore` with `['withscores', 'limit']`, `zAdd` with
+  its flags before the pairs, `zInterStore`/`zUnionStore`, `set` with a TTL or
+  `['nx', 'ex' => 10]`, `lRem(key, value, count)`, `eval`/`evalSha(script, arguments,
+  numberOfKeys)`, `sort`, `xAdd`, `xRead`, `lPos`, `getEx`, `copy`, `flushDb`/`flushAll`
+  with `async`, `rawCommand`. The other methods take the command's arguments in order.
+- On the facade itself the overrides win, as they do on `PhpRedisConnection`:
+  `Redis::set()`, `Redis::lrem()` and `Redis::eval()` take Laravel's order, and phpredis's
+  order of the same commands works through `Redis::command()` and inside a batch.
 - The reply is put in phpredis's shape by `SConcur\Laravel\Redis\PhpRedisReplies`: a status
   of a command that only acknowledges is `true`; a nil is `false` (Laravel's overrides turn
   `get`, `mget`, `blpop` and `brpop` back to `null`); yes/no commands such as `expire`,
@@ -170,7 +178,8 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
 - One level of array in the arguments is spread in place, and how depends on the command:
   PHP stores `['0' => 'a', '1' => 'b']` exactly as it stores `['a', 'b']`, so the shape
   cannot tell a map from a list. `mset`, `msetnx`, `hset` and `hmset` spread every array as
-  its keys followed by its values; the phpredis signatures above read their options arrays;
+  its keys followed by its values; `zadd` takes a trailing `member => score` map; the phpredis
+  signatures above read their options arrays;
   every other command spreads a list element by element and refuses a map with
   `InvalidRedisArgumentException`. Anything deeper, and `bool` or `null` anywhere, is refused
   with the same exception.

@@ -129,6 +129,7 @@
 | `persistent` | соединения и так переживают запрос — они живут в пуле расширения |
 | `name` | ничего: `CLIENT SETNAME` переименовал бы соединение, которым пользуются другие корутины |
 | `serializer`, `compression` | на клиенте ничего; кэш-стор сериализует сам |
+| `protocol` | ничего: RESP3 меняет форму ответа нескольких команд, а поддерживается только RESP2 |
 
 ## Фасад
 
@@ -155,11 +156,18 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
   `brpop`, `spop`, `zadd`, `zrangebyscore`, `zrevrangebyscore`, `zinterstore`,
   `zunionstore`, `eval`, `evalsha`, `flushdb`, `executeRaw`, `pipeline`, `transaction`,
   `subscribe`, `psubscribe`.
-- Любой другой вызов читается с сигнатурой phpredis. Там, где она принимает массив опций или
-  свой порядок аргументов, её разбирает `SConcur\Laravel\Redis\PhpRedisArguments`:
+- Любой другой вызов читается с сигнатурой phpredis, как и каждый вызов через
+  `Redis::command()` и на пакете пайплайна или транзакции. Там, где сигнатура принимает массив
+  опций или свой порядок аргументов, её разбирает `SConcur\Laravel\Redis\PhpRedisArguments`:
   `zRange`/`zRevRange` с `true` или `['withscores', 'byscore', 'bylex', 'rev', 'limit']`,
-  `set` с TTL или `['nx', 'ex' => 10]`, `lRem`, `sort`, `xAdd`, `xRead`, `lPos`, `getEx`,
-  `copy`, `rawCommand`. Остальные методы принимают аргументы команды по порядку.
+  `zRangeByScore`/`zRevRangeByScore` с `['withscores', 'limit']`, `zAdd` с флагами перед
+  парами, `zInterStore`/`zUnionStore`, `set` с TTL или `['nx', 'ex' => 10]`,
+  `lRem(key, value, count)`, `eval`/`evalSha(script, arguments, numberOfKeys)`, `sort`,
+  `xAdd`, `xRead`, `lPos`, `getEx`, `copy`, `flushDb`/`flushAll` с `async`, `rawCommand`.
+  Остальные методы принимают аргументы команды по порядку.
+- На самом фасаде побеждают переопределения, как и у `PhpRedisConnection`: `Redis::set()`,
+  `Redis::lrem()` и `Redis::eval()` принимают порядок Laravel, а порядок phpredis для тех же
+  команд работает через `Redis::command()` и внутри пакета.
 - Ответ приводится к форме phpredis в `SConcur\Laravel\Redis\PhpRedisReplies`: статус команды,
   которая только подтверждает, — `true`; nil — `false` (переопределения Laravel возвращают
   `null` для `get`, `mget`, `blpop` и `brpop`); команды «да/нет» вроде `expire`,
@@ -169,7 +177,8 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
 - Один уровень массива в аргументах раскрывается на месте, и как именно — решает команда:
   PHP хранит `['0' => 'a', '1' => 'b']` ровно так же, как `['a', 'b']`, поэтому по форме
   карту от списка не отличить. `mset`, `msetnx`, `hset` и `hmset` раскрывают любой массив
-  парами «ключ, значение»; сигнатуры phpredis выше читают свои массивы опций; все остальные
+  парами «ключ, значение»; `zadd` принимает замыкающую карту `member => score`; сигнатуры
+  phpredis выше читают свои массивы опций; все остальные
   команды раскрывают список поэлементно, а ассоциативный массив отвергают с
   `InvalidRedisArgumentException`. Всё, что глубже, а также `bool` и `null` в любом месте,
   отвергается тем же исключением.
