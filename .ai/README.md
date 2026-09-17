@@ -128,6 +128,7 @@ src/Redis/                      — Connector (the RedisManager client, and ever
                                   config check), Connection (answers like Laravel's
                                   PhpRedisConnection), PhpRedisArguments (phpredis
                                   signatures), PhpRedisReplies (phpredis reply shapes),
+                                  KeyPrefix (where phpredis puts OPT_PREFIX),
                                   Dsn, CommandBatch, CommandArguments (per-command array
                                   spreading), BlockingCommands (deadlines of waiting
                                   commands), UnsupportedCalls, Limiters/, Exceptions/
@@ -192,7 +193,7 @@ Points worth knowing before changing anything:
   next consume takes the channel down with a 404.
 - **The `sconcur` Redis client refuses what the feature does not read, at build time.**
   A maintainer decision: an unknown or unsupported key of a connection entry or of
-  `redis.options` (`prefix`, `max_retries`, `backoff_*`, `persistent`, …) throws
+  `redis.options` (`max_retries`, `backoff_*`, `persistent`, `serializer`, …) throws
   `UnsupportedRedisOptionException` unless switched off (`null`/`false`/`''`/`0`/`[]`); a
   cluster throws `RedisClusterNotSupportedException`; `multi`/`exec`/`watch`/`select`/raw
   `subscribe` throw `UnsupportedRedisCallException` with the replacement. Values the feature
@@ -228,6 +229,13 @@ Points worth knowing before changing anything:
   To extend coverage, add a case there first and let it fail. Deliberate differences, pinned
   in `FacadeTest`: a refused command throws instead of `false`; `scan`-family answers
   `[cursor, items]`; a script's status reply stays `'OK'` (status and bulk arrive alike).
+- **The key prefix follows phpredis's `OPT_PREFIX`, quirks included** (`KeyPrefix`), so an
+  application moves over with its keys where they are. The table was taken from `MONITOR` on
+  phpredis, and `PhpRedisParityTest` runs every case again with a prefix on both clients and
+  compares the keys left in the database. `rawCommand`/`executeRaw` and `client()` get no
+  prefix; `SORT BY/GET/STORE` and `SCAN MATCH` get none either, as in phpredis. The cache
+  store puts the connection's prefix before its own whatever the facade's client is, which
+  is what makes it share keys and locks with `RedisStore` on phpredis.
 - **How an array argument is spread depends on the command** (`CommandArguments`): PHP
   stores `['0' => 'a']` as a list, so the shape cannot decide. Pair commands spread
   key/value, the phpredis signatures read their option arrays, the rest refuse a map.

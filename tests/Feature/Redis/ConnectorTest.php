@@ -91,17 +91,49 @@ class ConnectorTest extends TestCase
     }
 
     #[Test]
-    public function aPrefixIsRefused(): void
+    public function thePrefixOfTheOptionsIsTheConnectionsPrefix(): void
+    {
+        $connection = (new Connector())->connect(
+            config: [
+                'host' => 'scl-redis',
+            ],
+            options: [
+                'prefix' => 'laravel_database_',
+            ],
+        );
+
+        self::assertSame('laravel_database_key', $connection->_prefix('key'));
+    }
+
+    /** The entry's own prefix wins, as it does in PhpRedisConnector. */
+    #[Test]
+    public function thePrefixOfTheEntryWinsOverTheOptions(): void
+    {
+        $connection = (new Connector())->connect(
+            config: [
+                'host'   => 'scl-redis',
+                'prefix' => 'entry_',
+            ],
+            options: [
+                'prefix' => 'laravel_database_',
+            ],
+        );
+
+        self::assertSame('entry_key', $connection->_prefix('key'));
+    }
+
+    #[Test]
+    public function aPrefixThatIsNotAStringIsRefused(): void
     {
         $this->expectException(UnsupportedRedisOptionException::class);
-        $this->expectExceptionMessage('"prefix" in redis.options');
+        $this->expectExceptionMessage('"prefix" in redis.options must be a string');
 
         (new Connector())->client(
             config: [
                 'host' => 'scl-redis',
             ],
             options: [
-                'prefix' => 'laravel_database_',
+                'prefix' => ['app'],
             ],
         );
     }
@@ -289,13 +321,49 @@ class ConnectorTest extends TestCase
             redis: [
                 'client'  => 'sconcur',
                 'options' => [
-                    'prefix' => 'laravel_database_',
+                    'persistent' => true,
                 ],
                 'cache'   => [
                     'host' => 'scl-redis',
                 ],
             ],
             name: 'cache',
+        );
+    }
+
+    /** Read the way PhpRedisConnector reads it, whichever client the facade is on. */
+    #[Test]
+    public function theStoreReadsThePrefixOfItsConnection(): void
+    {
+        $connector = new Connector();
+
+        $redis = [
+            'client'  => 'phpredis',
+            'options' => [
+                'prefix' => 'laravel_database_',
+            ],
+            'default' => [
+                'host' => 'scl-redis',
+            ],
+            'cache'   => [
+                'host'   => 'scl-redis',
+                'prefix' => 'cache_connection_',
+            ],
+        ];
+
+        self::assertSame(
+            'laravel_database_',
+            $connector->prefixForConnection(
+                redis: $redis,
+                name: 'default',
+            ),
+        );
+        self::assertSame(
+            'cache_connection_',
+            $connector->prefixForConnection(
+                redis: $redis,
+                name: 'cache',
+            ),
         );
     }
 }

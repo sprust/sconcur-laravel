@@ -27,6 +27,7 @@ class Connector implements ConnectorContract
 
     /** The keys of a connection entry the client reads. */
     private const array CONNECTION_KEYS = [
+        'prefix',
         'scheme',
         'host',
         'port',
@@ -42,7 +43,7 @@ class Connector implements ConnectorContract
     /**
      * The keys of `redis.options` that may be present. `cluster` only says how the entries
      * under `redis.clusters` are sharded, and asking for one of those is refused on its
-     * own; the others may be there as long as they are switched off.
+     * own; `parameters` may be there as long as it is switched off.
      */
     private const array OPTION_KEYS = [
         'cluster',
@@ -52,7 +53,6 @@ class Connector implements ConnectorContract
 
     /** The options that are refused unless switched off, even though they are expected keys. */
     private const array OPTIONS_OFF_ONLY = [
-        'prefix',
         'parameters',
     ];
 
@@ -93,8 +93,6 @@ class Connector implements ConnectorContract
         'backoff_base'      => 'a dropped connection is re-established by the extension, with no backoff to tune',
         'backoff_cap'       => 'a dropped connection is re-established by the extension, with no backoff to tune',
         'persistent'        => 'connections always outlive the request — they are pooled in the extension',
-        'prefix'            => 'a raw command does not say which of its arguments are keys, so there is'
-            . ' nothing to put a prefix on; the cache store has a "prefix" of its own',
         'name'              => 'CLIENT SETNAME would rename a connection other coroutines share',
         'protocol'          => 'RESP3 changes the reply shape of several commands, and only RESP2 is supported',
     ];
@@ -107,6 +105,10 @@ class Connector implements ConnectorContract
     {
         return new Connection(
             client: $this->client(
+                config: $config,
+                options: $options,
+            ),
+            prefix: self::prefix(
                 config: $config,
                 options: $options,
             ),
@@ -134,8 +136,8 @@ class Connector implements ConnectorContract
      * facade is on.
      *
      * `redis.options` belong to the facade's client. They are checked only when that client
-     * is this one; under phpredis or predis they are that client's business, and the store
-     * does not read them — its prefix is its own.
+     * is this one; under phpredis or predis they are that client's business. The one option
+     * the store reads whatever the client is, `prefix`, is read by prefixForConnection().
      *
      * @param array<string, mixed> $redis
      */
@@ -168,6 +170,24 @@ class Connector implements ConnectorContract
     }
 
     /**
+     * The key prefix of the connection named `$name`, the way PhpRedisConnector reads it: the
+     * entry's own `prefix` wins over `redis.options.prefix`.
+     *
+     * Read whichever client the facade is on — this is the path of the cache store, and the
+     * framework's RedisStore on phpredis puts that same prefix in front of its keys, so the two
+     * stores find each other's keys only if this one does too.
+     *
+     * @param array<string, mixed> $redis
+     */
+    public function prefixForConnection(array $redis, string $name): string
+    {
+        return self::prefix(
+            config: (array) ($redis[$name] ?? []),
+            options: (array) ($redis['options'] ?? []),
+        );
+    }
+
+    /**
      * @param array<string, mixed> $config  a connection entry with `url` already merged in
      * @param array<string, mixed> $options `redis.options`
      */
@@ -194,6 +214,19 @@ class Connector implements ConnectorContract
     }
 
     /**
+     * @param array<array-key, mixed> $config
+     * @param array<array-key, mixed> $options
+     */
+    private static function prefix(array $config, array $options): string
+    {
+        $prefix = self::isOff($config['prefix'] ?? null)
+            ? ($options['prefix'] ?? null)
+            : $config['prefix'];
+
+        return self::isOff($prefix) ? '' : (string) $prefix;
+    }
+
+    /**
      * @param array<array-key, mixed> $options
      */
     private static function assertOptions(array $options): void
@@ -212,6 +245,11 @@ class Connector implements ConnectorContract
                 );
             }
         }
+
+        self::assertPrefix(
+            value: $options['prefix'] ?? null,
+            where: 'redis.options',
+        );
     }
 
     /**
@@ -227,6 +265,11 @@ class Connector implements ConnectorContract
         self::assertOnlyKnownKeys(
             values: $config,
             known: self::CONNECTION_KEYS,
+            where: 'the Redis connection entry',
+        );
+
+        self::assertPrefix(
+            value: $config['prefix'] ?? null,
             where: 'the Redis connection entry',
         );
 
@@ -381,6 +424,22 @@ class Connector implements ConnectorContract
             $min,
             $max,
             var_export($value, true),
+        ));
+    }
+
+    /**
+     * A prefix is put in front of a key as it is, so it has to be a string.
+     */
+    private static function assertPrefix(mixed $value, string $where): void
+    {
+        if (self::isOff($value) || is_string($value)) {
+            return;
+        }
+
+        throw new UnsupportedRedisOptionException(sprintf(
+            '"prefix" in %s must be a string, got %s.',
+            $where,
+            get_debug_type($value),
         ));
     }
 

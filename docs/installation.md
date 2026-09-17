@@ -238,8 +238,10 @@ The details are in [queue.md](queue.md).
 ## 8. Redis: the `sconcur` client and the `sconcur_redis` cache (optional)
 
 The connections go into the `redis` section of `config/database.php`, as separate fields,
-and the section is written out whole: the framework's own entries carry `prefix` and
-`max_retries`, which the client refuses.
+and the section is written out whole: the framework's own entries carry `max_retries` and
+`backoff_*`, which the client refuses. `prefix` is kept and put on the keys the way phpredis
+puts it; an application moving from phpredis follows
+[Moving from phpredis](redis.md#moving-from-phpredis).
 
 ```php
 // config/database.php

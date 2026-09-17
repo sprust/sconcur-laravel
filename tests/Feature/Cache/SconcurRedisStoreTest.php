@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Tests\Feature\Cache;
 
 use Illuminate\Cache\Repository;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Carbon\CarbonInterval as Duration;
 use Illuminate\Support\Facades\Cache;
@@ -363,18 +364,66 @@ class SconcurRedisStoreTest extends BaseRedisTestCase
         self::assertSame('value', $this->cache()->get('key'));
     }
 
-    /** With the facade on the sconcur client, the options are this client's, and a prefix is refused. */
+    /** With the facade on the sconcur client, the options are this client's, and what it refuses is refused. */
     #[Test]
     public function theStoreRefusesWhatTheClientRefuses(): void
     {
         config()->set('database.redis.client', 'sconcur');
-        config()->set('database.redis.options', ['prefix' => 'laravel_database_']);
+        config()->set('database.redis.options', ['persistent' => true]);
 
         Cache::forgetDriver('sconcur_redis');
 
         $this->expectException(UnsupportedRedisOptionException::class);
 
         $this->cache();
+    }
+
+    /**
+     * The connection's prefix goes in front of the store's, whichever client the facade is on,
+     * and a key written by the framework's RedisStore on phpredis with the same configuration
+     * is found under the same name — a value both ways, and a lock.
+     */
+    #[Test]
+    public function theStoreSharesKeysAndLocksWithRedisStoreOnPhpRedis(): void
+    {
+        if (!extension_loaded('redis')) {
+            self::markTestSkipped('phpredis is not installed.');
+        }
+
+        config()->set('database.redis.client', 'phpredis');
+        config()->set('database.redis.options', ['prefix' => 'laravel_database_']);
+        config()->set('cache.prefix', 'laravel_cache_');
+        config()->set('cache.stores.redis', [
+            'driver'          => 'redis',
+            'connection'      => 'cache',
+            'lock_connection' => 'default',
+        ]);
+
+        $this->getApp()->forgetInstance('redis');
+
+        Cache::forgetDriver('sconcur_redis');
+
+        $this->cache()->put('shared', 'from sconcur', 60);
+
+        $redisStore = Cache::store('redis');
+
+        $redisLocks = $redisStore->getStore();
+
+        assert($redisLocks instanceof LockProvider);
+
+        self::assertSame('from sconcur', $redisStore->get('shared'));
+        self::assertSame(serialize('from sconcur'), $this->client()->get('laravel_database_laravel_cache_shared'));
+
+        $redisStore->put('other', 'from phpredis', 60);
+
+        self::assertSame('from phpredis', $this->cache()->get('other'));
+
+        $lock = $this->store()->lock('job', 60);
+
+        self::assertTrue($lock->acquire());
+        self::assertFalse($redisLocks->lock('job', 60)->get());
+        self::assertSame($lock->owner(), $this->lockClient()->get('laravel_database_laravel_cache_job'));
+        self::assertTrue($lock->release());
     }
 
     #[Test]

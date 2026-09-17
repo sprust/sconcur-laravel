@@ -19,6 +19,7 @@ synchronously. What the feature itself does and does not do is in the library's
 - [Connections](#connections)
 - [What the client refuses](#what-the-client-refuses)
 - [The facade](#the-facade)
+- [The key prefix](#the-key-prefix)
 - [Pipelines and transactions](#pipelines-and-transactions)
 - [Pub/Sub](#pubsub)
 - [The cache store](#the-cache-store)
@@ -36,6 +37,10 @@ Connections are described where Laravel keeps them, in the `redis` section of
 // config/database.php
 'redis' => [
     'client' => env('REDIS_CLIENT', 'sconcur'),
+
+    'options' => [
+        'prefix' => env('REDIS_PREFIX', Str::slug((string) env('APP_NAME', 'laravel'), '_') . '_database_'),
+    ],
 
     'default' => [
         'url'        => env('REDIS_URL'),
@@ -61,7 +66,7 @@ Connections are described where Laravel keeps them, in the `redis` section of
 
 Write the section out whole. Laravel merges only `connections` of `config/database.php`
 with its own file, so an application's `redis` section replaces the framework's rather
-than adding to it — which is what is needed here: the framework's entries carry `prefix`,
+than adding to it — which is what is needed here: the framework's entries carry
 `max_retries` and `backoff_*`, and the client refuses them.
 
 | Key | Default | What it does |
@@ -77,6 +82,7 @@ than adding to it — which is what is needed here: the framework's entries carr
 | `timeout_ms` | `30000` (the extension's) | deadline for one command; `0` means no deadline |
 | `pool_size` | `4` (the extension's) | multiplexed connections per process for this server; at most 64 |
 | `conn_max_lifetime_ms` | no limit | how long a pooled connection is kept before it is replaced |
+| `prefix` | `redis.options.prefix` | put in front of the keys, as phpredis does; see [the key prefix](#the-key-prefix) |
 
 `SConcur\Laravel\Redis\Dsn` builds the feature's DSN out of the fields: `redis://` for
 `tcp`, `rediss://` for `tls`, `unix://path?db=&user=&pass=` for a socket. The username and
@@ -95,7 +101,7 @@ the replacement where there is one.
 | Exception | When |
 |---|---|
 | `RedisClusterNotSupportedException` | an entry of `redis.clusters` is asked for |
-| `UnsupportedRedisOptionException` | a connection entry carries a key outside the table above, set to something; `redis.options` carries `prefix` or `parameters` that are not empty, or any other key set to something; a value the feature would read differently from what it says — see below |
+| `UnsupportedRedisOptionException` | a connection entry carries a key outside the table above, set to something; `redis.options` carries a key the client does not read, set to something — it reads `prefix` and `cluster`, and takes `parameters` only empty; a value the feature would read differently from what it says — see below |
 | `UnsupportedRedisCallException` | a call listed in [the facade](#the-facade) section |
 
 All three live in `SConcur\Laravel\Redis\Exceptions\`.
@@ -119,12 +125,12 @@ differently from what it says:
 | `host` starting with `/` | a socket is `scheme => unix` with `path` |
 | `path` with `tcp` or `tls`; `host` or `port` with `unix`; `unix` without `path` | the key is not read under that scheme |
 | `username` without `password` | the driver logs in only when there is a password, so the connection would run as the default user |
+| `prefix` that is not a string | it is put in front of a key as it is |
 
 The keys applications carry over most often, and why each is refused:
 
 | Key | Instead |
 |---|---|
-| `prefix` | none on the client: a raw command does not say which of its arguments are keys, so there is nothing to put a prefix on. The cache store has a `prefix` of its own |
 | `max_retries`, `backoff_*` | the extension re-establishes a dropped connection by itself, and never retries a command: the server may have run it and lost only the answer |
 | `timeout`, `read_timeout` | `timeout_ms` |
 | `persistent` | connections always outlive the request — they are pooled in the extension |
@@ -174,15 +180,16 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
   `get`, `mget`, `blpop` and `brpop` back to `null`); yes/no commands such as `expire`,
   `sismember` and `hexists` are `bool`; scores and float counters are `float`; `type` is
   phpredis's integer constant; `hgetall`, `config get`, `zpopmin`/`zpopmax` and anything
-  `WITHSCORES` are maps; `hmget` inside a batch is keyed by field; `info` is parsed into a map.
+  `WITHSCORES` are maps; `hmget` inside a batch is keyed by field; `info` is parsed into a map;
+  `xrange`/`xrevrange` answer id => fields, `xread`/`xreadgroup` stream => id => fields, and a
+  read that found nothing is `[]`.
 - One level of array in the arguments is spread in place, and how depends on the command:
   PHP stores `['0' => 'a', '1' => 'b']` exactly as it stores `['a', 'b']`, so the shape
   cannot tell a map from a list. `mset`, `msetnx`, `hset` and `hmset` spread every array as
   its keys followed by its values; `zadd` takes a trailing `member => score` map; the phpredis
-  signatures above read their options arrays;
-  every other command spreads a list element by element and refuses a map with
-  `InvalidRedisArgumentException`. Anything deeper, and `bool` or `null` anywhere, is refused
-  with the same exception.
+  signatures above read their options arrays; every other command spreads a list element by
+  element and refuses a map with `InvalidRedisArgumentException`. Anything deeper, and `bool`
+  or `null` anywhere, is refused with the same exception.
 - A blocking command gets the deadline its wait needs: its own wait plus `timeout_ms`, or no
   deadline for a wait without end. The wait is read from the arguments the way the extension
   reads it — `BLPOP`, `BRPOP`, `BZPOPMIN`, `BZPOPMAX`, `BLMOVE`, `BRPOPLPUSH`, `BLMPOP`,
@@ -225,6 +232,46 @@ through `Redis::command()`:
 The feature refuses more than that on its own — `QUIT`, `CLIENT REPLY`, `MONITOR`,
 `SWAPDB` and the rest of the list in its documentation — with its own
 `UnsupportedRedisCommandException`.
+
+## The key prefix
+
+`prefix` in `redis.options`, or in a connection entry, where it wins over the options — the
+way Laravel's `PhpRedisConnector` reads it. The connection puts it where phpredis puts its
+`Redis::OPT_PREFIX`, so a key written by phpredis is found here under the same name.
+`tests/Feature/Redis/PhpRedisParityTest.php` runs every call with a prefix on both clients
+and requires the same answer and the same keys in the database.
+
+```php
+// redis.options.prefix = 'laravel_database_'
+Redis::set('user:1', 'Ann');                          // SET laravel_database_user:1 Ann
+Redis::eval($script, 1, 'user:1', 'arg');             // KEYS[1] is prefixed, ARGV[1] is not
+Redis::executeRaw(['GET', 'user:1']);                 // GET user:1 — no prefix
+Redis::keys('user:*');                                // ['laravel_database_user:1']
+Redis::_prefix('user:*');                             // 'laravel_database_user:*'
+```
+
+The prefix goes on:
+
+- every key of a command, wherever the command keeps it: `set`, `mget`, `mset`, `rename`,
+  `blpop` (not the timeout), `eval`/`evalsha` (the keys, not the arguments), `zinterstore`,
+  `xread` (the streams, not the ids), `bitop`, and the rest of the table in
+  `SConcur\Laravel\Redis\KeyPrefix`;
+- the channels of `publish` and `subscribe`, the patterns of `psubscribe`, the pattern of
+  `keys`;
+- the same calls inside `pipeline()` and `transaction()`.
+
+It does not go on, again as with phpredis:
+
+- `executeRaw()` and `rawCommand()`;
+- a command missing from the table, such as a module's;
+- the `MATCH` pattern of `scan()`, `hscan()`, `sscan()` and `zscan()`: write it with the
+  prefix, `Redis::scan($cursor, ['match' => Redis::_prefix('user:*')])`;
+- `BY`, `GET` and `STORE` of `sort`;
+- a key name a Lua script builds from its arguments;
+- `Redis::connection()->client()`, the feature's own object.
+
+Replies keep the names the server holds, prefix included: `keys()` and `scan()` answer them
+with it, and a subscription callback gets the channel with it.
 
 ## Pipelines and transactions
 
@@ -272,7 +319,8 @@ Redis::psubscribe(['user:*'], function (string $payload, string $channel): void 
 ```
 
 The callback gets the payload and the channel, the way the framework's connections call
-it. A subscription owns a connection of its own, because the protocol puts the
+it. With a [key prefix](#the-key-prefix) the subscription is on the prefixed channels and
+patterns, and the callback gets the channel with the prefix, as with phpredis. A subscription owns a connection of its own, because the protocol puts the
 connection itself into subscriber mode. The loop ends when the callback throws, when the
 coroutine running it ends, or with `RedisConnectionException` when the connection is lost;
 the connection is released every way. A failure to close it does not replace the exception
@@ -302,15 +350,21 @@ CACHE_STORE=sconcur_redis
 |---|---|---|
 | `connection` | `default` | the `database.redis` connection the values live on |
 | `lock_connection` | `connection` | the connection the locks live on |
-| `prefix` | `cache.prefix` | a prefix in front of every key and lock name |
+| `prefix` | `cache.prefix` | the store's prefix, after the connection's, in front of every key and lock name |
 | `events` | `true` | cache events, as for any store |
 
 The store builds its connections from `database.redis` itself, with the same
 `SConcur\Laravel\Redis\Connector` the facade uses, rather than through `RedisManager`. So
 it runs on the feature whatever `database.redis.client` says, and refuses the connection
 entries the client refuses. `redis.options` belong to the facade's client: the store checks
-them only when that client is `sconcur`, and otherwise leaves them to phpredis or predis —
-the store's prefix is its own.
+them only when that client is `sconcur`, and otherwise leaves them to phpredis or predis.
+
+The connection's `prefix` is read whichever client the facade is on. A key is the
+connection's prefix, then the store's, then the key — the name the framework's `RedisStore`
+writes on phpredis with the same configuration. The same goes for a lock, on the lock
+connection's prefix. So the two stores share values and locks, which
+`SconcurRedisStoreTest` checks against `RedisStore` on phpredis. Tagged values are the
+exception, see below.
 
 It does not reuse the framework's `RedisStore`: that one opens a transaction with
 `multi()` and closes it with `exec()` as two separate calls, which on a connection shared
@@ -336,6 +390,9 @@ is written on the feature's typed API instead.
 - `flush()` empties the whole database the connection points at, other keys included —
   the same as `RedisStore`. Give the cache a database of its own.
 - Tags work through the framework's `TaggableStore`, which keeps them in the store itself.
+  That is not the scheme of `RedisStore`, whose `RedisTaggedCache` keeps a sorted set per tag,
+  so a value put with tags by one store is not found with tags by the other, and a tag
+  flushed through one is not flushed for the other.
 
 ## Locks
 
@@ -375,7 +432,8 @@ QUEUE_CONNECTION=redis
 ```
 
 Pushed, delayed and bulk jobs, retries and `block_for` are covered by
-`tests/Feature/Redis/QueueTest.php`.
+`tests/Feature/Redis/QueueTest.php`; the queue's keys under a prefix by
+`tests/Feature/Redis/PrefixTest.php`.
 
 - The client is chosen by `database.redis.client` for the whole application, so the queue and
   `Redis::` are on the same client.
@@ -387,24 +445,104 @@ Pushed, delayed and bulk jobs, retries and `block_for` are covered by
 
 ## Moving from phpredis
 
-With `REDIS_CLIENT=sconcur` Laravel's own Redis code — the facade, locks, limiters, the
-queue — needs no `ext-redis`. Before removing the extension:
+The client is written so that an application on phpredis moves over with the same Redis,
+the same keys and no data to migrate: the cache stays warm, queued jobs stay queued, and a
+lock taken before the switch is still held. During a rolling deploy the processes still on
+phpredis and those already on `sconcur` work side by side on the same data. The one thing
+that does not carry over is a value cached with tags: the two stores keep tags differently
+(see [the cache store](#the-cache-store)), so tagged values are computed again after the
+switch, and a tag flushed by a process on one store does not reach the other.
 
-1. Write the `redis` section of `config/database.php` out whole, without `prefix`,
-   `max_retries` and `backoff_*` (see [connections](#connections)).
-2. Switch the cache to `CACHE_STORE=sconcur_redis`: the framework's `redis` store calls
-   `multi()` in `putMany()`.
-3. Look through the application's own Redis code for what differs on purpose: a refused
-   command caught as `false`, `scan()` with a cursor passed by reference, a script's status
-   reply compared with `true`, and calls on `Redis::connection()->client()`, which is the
-   feature's object rather than `\Redis`.
-4. Check the packages that use Redis directly. A package requiring `ext-redis` in its
+1. Switch the client and the cache store in `.env`:
+
+   ```dotenv
+   REDIS_CLIENT=sconcur
+   CACHE_STORE=sconcur_redis
+   ```
+
+   `QUEUE_CONNECTION=redis` stays as it is.
+
+2. Write the `redis` section of `config/database.php` out whole: take the framework's and
+   drop what the client refuses. For Laravel's own skeleton that is `max_retries` and
+   `backoff_*` — the extension re-establishes a dropped connection by itself.
+
+   ```php
+   'redis' => [
+       'client' => env('REDIS_CLIENT', 'sconcur'),
+
+       'options' => [
+           'cluster' => env('REDIS_CLUSTER', 'redis'),
+           'prefix'  => env('REDIS_PREFIX', Str::slug((string) env('APP_NAME', 'laravel'), '_') . '_database_'),
+       ],
+
+       'default' => [
+           'url'      => env('REDIS_URL'),
+           'host'     => env('REDIS_HOST', '127.0.0.1'),
+           'username' => env('REDIS_USERNAME'),
+           'password' => env('REDIS_PASSWORD'),
+           'port'     => env('REDIS_PORT', '6379'),
+           'database' => env('REDIS_DB', '0'),
+       ],
+
+       'cache' => [
+           'url'      => env('REDIS_URL'),
+           'host'     => env('REDIS_HOST', '127.0.0.1'),
+           'username' => env('REDIS_USERNAME'),
+           'password' => env('REDIS_PASSWORD'),
+           'port'     => env('REDIS_PORT', '6379'),
+           'database' => env('REDIS_CACHE_DB', '1'),
+       ],
+   ],
+   ```
+
+   Keep `prefix` exactly as it was: it is what keeps the keys where phpredis put them. If
+   the application set `serializer` or `compression`, stop here — the client refuses both,
+   and the values phpredis wrote with them could not be read.
+
+3. Add the store to `config/cache.php`, on the same connections the `redis` store used:
+
+   ```php
+   'sconcur_redis' => [
+       'driver'          => 'sconcur_redis',
+       'connection'      => env('REDIS_CACHE_CONNECTION', 'cache'),
+       'lock_connection' => env('REDIS_CACHE_LOCK_CONNECTION', 'default'),
+   ],
+   ```
+
+   The framework's `redis` store cannot stay the cache store: its `putMany()` calls `multi()`.
+   With the same connections and the same `cache.prefix` the new store reads what the old one
+   wrote — see [the cache store](#the-cache-store).
+
+   Keep the `redis` entry itself when `SESSION_DRIVER=redis`: the session handler is built on
+   that store by name. The session calls do not reach `putMany()`, but this package does not
+   test the `redis` session driver on this client.
+
+4. Look through the application's own Redis code for what differs on purpose:
+   - a refused command throws `RedisCommandException` rather than answering `false`;
+   - `scan()` answers `[cursor, items]` rather than moving a cursor passed by reference, and
+     its `MATCH` pattern needs the prefix written in;
+   - a status a Lua script returns is `'OK'`, not `true`;
+   - `Redis::connection()->client()` is the feature's object, not `\Redis`, and puts no
+     prefix on anything;
+   - `multi()`/`exec()` as separate calls become `Redis::transaction(function ($transaction) { ... })`,
+     and `watch()` has no replacement.
+
+5. Check the packages that use Redis directly. A package requiring `ext-redis` in its
    `composer.json` keeps the extension; Horizon is not checked against this client.
+
+6. Deploy, and check that the data is where it was:
+
+   ```bash
+   php artisan tinker --execute="dump(Redis::keys('*'))"   # the names phpredis wrote, prefix included
+   php artisan tinker --execute="dump(Cache::get('some-key'))"
+   php artisan queue:work --once                            # a job queued before the switch runs
+   ```
+
+   Once no process runs on phpredis, `ext-redis` can be removed.
 
 ## Limits
 
 - No cluster, no sentinel, no sharded pub/sub.
-- No key prefix on the facade.
 - No `WATCH`, and no `MULTI`/`EXEC` as separate calls — only `transaction()` with a callback.
 - RESP2 only.
 - The framework's own `redis` cache store does not work on this client: its `putMany()`

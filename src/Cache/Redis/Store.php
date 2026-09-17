@@ -21,7 +21,9 @@ use SConcur\Features\Redis\Pipeline;
  * - a finite number is stored as it is, so INCRBY works on it, and comes back as the
  *   numeric string Redis holds — the same as RedisStore;
  * - anything else goes through serialize(), and is read back with
- *   `cache.serializable_classes` as the allowed classes.
+ *   `cache.serializable_classes` as the allowed classes;
+ * - a key is the connection's `prefix`, then the store's, then the key — which is what
+ *   RedisStore writes when phpredis puts its OPT_PREFIX in front of the store's prefix.
  *
  * Tags come from TaggableStore, which keeps them in the store itself; RedisTaggedCache is
  * written against the phpredis and predis connections.
@@ -30,12 +32,16 @@ class Store extends TaggableStore implements LockProvider
 {
     /**
      * @param array<int, class-string>|bool|null $serializableClasses
+     * @param string                             $connectionPrefix     the `prefix` of the connection the values live on
+     * @param string                             $lockConnectionPrefix the `prefix` of the connection the locks live on
      */
     public function __construct(
         protected RedisClient $client,
         protected RedisClient $lockClient,
         protected string $prefix = '',
         protected array|bool|null $serializableClasses = null,
+        protected string $connectionPrefix = '',
+        protected string $lockConnectionPrefix = '',
     ) {
     }
 
@@ -44,7 +50,7 @@ class Store extends TaggableStore implements LockProvider
      */
     public function get($key): mixed
     {
-        $value = $this->client->get($this->prefix . $key);
+        $value = $this->client->get($this->keyPrefix() . $key);
 
         return ($value === null) ? null : $this->unserialize($value);
     }
@@ -61,7 +67,7 @@ class Store extends TaggableStore implements LockProvider
         }
 
         $values = $this->client->mGet(
-            array_map(fn(string $key): string => $this->prefix . $key, array_values($keys)),
+            array_map(fn(string $key): string => $this->keyPrefix() . $key, array_values($keys)),
         );
 
         $results = [];
@@ -70,7 +76,7 @@ class Store extends TaggableStore implements LockProvider
             // mGet keys its answer by what was asked for, and PHP turns an integer-looking
             // key into an int both when that map was built and when it is read here, so
             // the lookup lands on the same entry either way.
-            $value = $values[$this->prefix . $key] ?? null;
+            $value = $values[$this->keyPrefix() . $key] ?? null;
 
             $results[$key] = ($value === null) ? null : $this->unserialize($value);
         }
@@ -113,7 +119,7 @@ class Store extends TaggableStore implements LockProvider
                 $pipeline->command(
                     name: 'SET',
                     arguments: [
-                        $this->prefix . $key,
+                        $this->keyPrefix() . $key,
                         $this->serialize($value),
                         'EX',
                         $ttlSeconds,
@@ -157,7 +163,7 @@ class Store extends TaggableStore implements LockProvider
     public function increment($key, $value = 1): int
     {
         return $this->client->incrBy(
-            key: $this->prefix . $key,
+            key: $this->keyPrefix() . $key,
             by: (int) $value,
         );
     }
@@ -169,7 +175,7 @@ class Store extends TaggableStore implements LockProvider
     public function decrement($key, $value = 1): int
     {
         return $this->client->decrBy(
-            key: $this->prefix . $key,
+            key: $this->keyPrefix() . $key,
             by: (int) $value,
         );
     }
@@ -191,7 +197,7 @@ class Store extends TaggableStore implements LockProvider
      */
     public function forget($key): bool
     {
-        return $this->client->del($this->prefix . $key) > 0;
+        return $this->client->del($this->keyPrefix() . $key) > 0;
     }
 
     /**
@@ -217,7 +223,7 @@ class Store extends TaggableStore implements LockProvider
     {
         return new Lock(
             client: $this->lockClient,
-            name: $this->prefix . $name,
+            name: $this->lockConnectionPrefix . $this->prefix . $name,
             seconds: (int) $seconds,
             owner: $owner,
         );
@@ -242,6 +248,15 @@ class Store extends TaggableStore implements LockProvider
     }
 
     /**
+     * What a key is written under: the connection's prefix, then the store's — the order
+     * RedisStore on phpredis ends up with. getPrefix() answers the store's alone, as there.
+     */
+    protected function keyPrefix(): string
+    {
+        return $this->connectionPrefix . $this->prefix;
+    }
+
+    /**
      * Every write goes through SET as a raw command, the one putMany() uses too, so a number
      * reaches the server in one spelling whichever method stored it: the feature writes a
      * float in its shortest exact form, where a (string) cast would follow the `precision`
@@ -254,7 +269,7 @@ class Store extends TaggableStore implements LockProvider
         $reply = $this->client->command(
             name: 'SET',
             arguments: [
-                $this->prefix . $key,
+                $this->keyPrefix() . $key,
                 $this->serialize($value),
                 ...$options,
             ],

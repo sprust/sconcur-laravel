@@ -36,8 +36,8 @@ return [
 
     /*
     | Replaces the framework's `redis` section whole rather than merging into it — only
-    | `connections` is merged — and has to: the framework's entries carry `prefix`,
-    | `max_retries` and `backoff_*`, which the sconcur client does not read and refuses.
+    | `connections` is merged — and has to: the framework's entries carry `max_retries` and
+    | `backoff_*`, which the sconcur client does not read and refuses.
     |
     | `timeout_ms`, `pool_size` and `conn_max_lifetime_ms` are the feature's own; left
     | out, the extension's defaults stand (30000 ms, 4 connections, no lifetime limit).

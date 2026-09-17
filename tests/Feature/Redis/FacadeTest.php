@@ -404,8 +404,8 @@ class FacadeTest extends BaseRedisTestCase
         $reply = $redis->command('xread', [['stream' => '0'], -1, 6000]);
 
         self::assertIsArray($reply);
-        self::assertFalse($redis->command('xread', [['stream' => '$'], -1, 100]));
-        self::assertFalse($redis->executeRaw(['XREAD', 'BLOCK', 100, 'STREAMS', 'stream', '$']));
+        self::assertSame([], $redis->command('xread', [['stream' => '$'], -1, 100]));
+        self::assertSame([], $redis->executeRaw(['XREAD', 'BLOCK', 100, 'STREAMS', 'stream', '$']));
     }
 
     /** A command failing while it runs does not stop the others — in a transaction too. */

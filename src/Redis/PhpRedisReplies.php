@@ -24,6 +24,8 @@ use SConcur\Features\Redis\Dto\ErrorReply;
  * - `HGETALL`, `CONFIG GET`, `ZPOPMIN`/`ZPOPMAX` and anything `WITHSCORES` fold into a map,
  *   and `HMGET` is keyed by the fields asked for;
  * - `INFO` is parsed into a map, numbers as numbers;
+ * - `XRANGE`/`XREVRANGE` answer id => fields, `XREAD`/`XREADGROUP` stream => id => fields,
+ *   and a read that found nothing is an empty array;
  * - an error inside a batch is `false`, which is what phpredis puts in its place.
  *
  * What cannot be followed is a status reply the command does not name. The feature hands
@@ -105,6 +107,16 @@ class PhpRedisReplies
         'ZPOPMAX',
     ];
 
+    private const array STREAM_RANGES = [
+        'XRANGE',
+        'XREVRANGE',
+    ];
+
+    private const array STREAM_READS = [
+        'XREAD',
+        'XREADGROUP',
+    ];
+
     /**
      * @param list<mixed> $arguments the raw arguments the command went out with
      */
@@ -168,6 +180,14 @@ class PhpRedisReplies
             return is_array($reply) ? self::scores($reply) : $reply;
         }
 
+        if (in_array($name, self::STREAM_RANGES, true)) {
+            return is_array($reply) ? self::entries($reply) : $reply;
+        }
+
+        if (in_array($name, self::STREAM_READS, true)) {
+            return is_array($reply) ? self::streams($reply) : [];
+        }
+
         if (($name === 'INFO') && is_string($reply)) {
             return self::info($reply);
         }
@@ -208,6 +228,50 @@ class PhpRedisReplies
             static fn(mixed $score): float => (float) $score,
             self::pairs($reply),
         );
+    }
+
+    /**
+     * Stream entries — `[id, [field, value, …]]` each — as id => field => value.
+     *
+     * @param array<array-key, mixed> $reply
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function entries(array $reply): array
+    {
+        $entries = [];
+
+        foreach ($reply as $entry) {
+            if (!is_array($entry) || !array_key_exists(0, $entry)) {
+                continue;
+            }
+
+            $entries[(string) $entry[0]] = is_array($entry[1] ?? null) ? self::pairs($entry[1]) : [];
+        }
+
+        return $entries;
+    }
+
+    /**
+     * A stream read — `[stream, entries]` each — as stream => id => field => value.
+     *
+     * @param array<array-key, mixed> $reply
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function streams(array $reply): array
+    {
+        $streams = [];
+
+        foreach ($reply as $stream) {
+            if (!is_array($stream) || !array_key_exists(0, $stream)) {
+                continue;
+            }
+
+            $streams[(string) $stream[0]] = is_array($stream[1] ?? null) ? self::entries($stream[1]) : [];
+        }
+
+        return $streams;
     }
 
     /**

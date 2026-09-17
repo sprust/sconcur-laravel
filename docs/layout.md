@@ -13,7 +13,7 @@ src/Queue/Rabbitmq/            — the queue driver and the consumer pool (Conne
 src/Database/                  — TransactionStore (the transaction nesting level, per coroutine)
 src/Database/Mysql/            — the sconcur_mysql connection (Connector, Connection, Dsn, TransactionStack)
 src/Redis/                     — the sconcur Redis client (Connector, Connection, Dsn, CommandBatch,
-                                 CommandArguments, BlockingCommands, PhpRedisArguments,
+                                 CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,
                                  PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
 src/Cache/Redis/               — the sconcur_redis cache store (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (a retry pause that does not freeze the worker),

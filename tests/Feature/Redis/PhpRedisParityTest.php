@@ -8,6 +8,8 @@ use Illuminate\Redis\Connections\Connection as BaseConnection;
 use Illuminate\Redis\Connectors\PhpRedisConnector;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
+use SConcur\Laravel\Redis\Connection;
+use SConcur\Laravel\Redis\Connector;
 
 /**
  * The same call through Laravel's PhpRedisConnection and through the sconcur connection,
@@ -19,6 +21,11 @@ use PHPUnit\Framework\Attributes\Test;
  * an options array, reply shapes phpredis reworks (status, nil, booleans, floats, maps) and
  * the object a pipeline or transaction callback gets.
  *
+ * Every call runs a second time with a key prefix on both connections, and then the keys the
+ * call left in the database have to match as well: phpredis puts its OPT_PREFIX on the keys
+ * of each of its methods, and an application moving over must find its keys under the same
+ * names.
+ *
  * What differs on purpose is pinned in FacadeTest instead: a refused command throws rather
  * than answering false, the scan family answers `[cursor, items]`, a status an EVAL script
  * returns stays a string.
@@ -27,6 +34,8 @@ use PHPUnit\Framework\Attributes\Test;
  */
 class PhpRedisParityTest extends BaseRedisTestCase
 {
+    private const string PREFIX = 'app:';
+
     /**
      * @param list<mixed> $arguments
      */
@@ -51,6 +60,37 @@ class PhpRedisParityTest extends BaseRedisTestCase
         );
 
         self::assertSame($expected, $actual);
+    }
+
+    /**
+     * @param list<mixed> $arguments
+     */
+    #[Test]
+    #[DataProvider('calls')]
+    public function theSconcurConnectionPrefixesLikePhpRedis(string $method, array $arguments): void
+    {
+        if (!extension_loaded('redis')) {
+            self::markTestSkipped('phpredis is not installed.');
+        }
+
+        $expected = $this->callOn(
+            connection: $this->phpRedis(self::PREFIX),
+            method: $method,
+            arguments: $arguments,
+            prefix: self::PREFIX,
+        );
+
+        $expectedKeys = $this->keys();
+
+        $actual = $this->callOn(
+            connection: $this->prefixedSconcur(),
+            method: $method,
+            arguments: $arguments,
+            prefix: self::PREFIX,
+        );
+
+        self::assertSame($expected, $actual);
+        self::assertSame($expectedKeys, $this->keys());
     }
 
     /**
@@ -242,31 +282,59 @@ class PhpRedisParityTest extends BaseRedisTestCase
         yield 'exists array' => ['exists', [['str', 'num']]];
         yield 'mget assoc keys' => ['mget', [['x' => 'str', 'y' => 'nope']]];
         yield 'blpop multiple keys' => ['blpop', ['nope', 'list', 1]];
+        yield 'brpoplpush' => ['brpoplpush', ['list', 'list2', 1]];
+        yield 'sinterstore' => ['sinterstore', ['dest', 'set', 'set']];
+        yield 'bitop' => ['bitop', ['AND', 'dest', 'str', 'num']];
+        yield 'sort by get store' => ['sort', ['list', ['by' => 'weight_*', 'get' => ['#'], 'store' => 'sorted', 'alpha' => true]]];
+        yield 'eval keys and argv' => ['eval', ["return {KEYS[1], KEYS[2], ARGV[1]}", 2, 'str', 'num', 'arg']];
+        yield 'xread' => ['xread', [['stream' => '0'], 1]];
+        yield 'xrange' => ['xrange', ['stream', '-', '+']];
+        yield 'renamenx missing' => ['renamenx', ['str', 'fresh']];
+        yield 'zunionstore missing' => ['zunionstore', ['out', ['zset', 'nope']]];
+        yield 'pipeline keys' => ['pipeline', [static function ($p) { $p->mset(['m1' => 'a', 'm2' => 'b']); $p->rename('m1', 'm3'); $p->mget(['m2', 'm3']); $p->eval("return KEYS[1]", ['m2'], 1); }]];
+        yield 'transaction keys' => ['transaction', [static function ($t) { $t->lpush('tl', 'a'); $t->lmove('tl', 'tl2', 'LEFT', 'RIGHT'); $t->exists('tl', 'tl2'); }]];
+        yield 'pipeline rawCommand' => ['pipeline', [static function ($p) { $p->rawCommand('SET', 'raw', 'v'); $p->rawCommand('GET', 'str'); }]];
     }
 
     /**
-     * Seeds the database the same way for either connection, then makes the call.
+     * Seeds the database the same way for either connection, under the prefix the call is made
+     * with, then makes the call.
      *
      * @param list<mixed> $arguments
      */
-    private function callOn(BaseConnection $connection, string $method, array $arguments): mixed
+    private function callOn(BaseConnection $connection, string $method, array $arguments, string $prefix = ''): mixed
     {
         $this->redis()->client()->flushDb(confirm: true);
 
         $client = $this->redis()->client();
 
-        $client->set('str', 'value');
-        $client->set('num', '10');
-        $client->rPush('list', 'a', 'b', 'c');
-        $client->sAdd('set', 'x', 'y');
-        $client->hSet('hash', ['f1' => 'v1', 'f2' => 'v2']);
-        $client->command('ZADD', ['zset', 1, 'one', 2, 'two', 3, 'three']);
+        $client->set($prefix . 'str', 'value');
+        $client->set($prefix . 'num', '10');
+        $client->rPush($prefix . 'list', 'a', 'b', 'c');
+        $client->sAdd($prefix . 'set', 'x', 'y');
+        $client->hSet($prefix . 'hash', ['f1' => 'v1', 'f2' => 'v2']);
+        $client->command('ZADD', [$prefix . 'zset', 1, 'one', 2, 'two', 3, 'three']);
+        $client->command('XADD', [$prefix . 'stream', '1-0', 'field', 'value']);
 
         return $connection->{$method}(...$arguments);
     }
 
+    /**
+     * The names in the database, as the server holds them.
+     *
+     * @return list<string>
+     */
+    private function keys(): array
+    {
+        $keys = (array) $this->redis()->client()->command('KEYS', ['*']);
+
+        sort($keys);
+
+        return array_map(strval(...), $keys);
+    }
+
     /** A PhpRedisConnection on the database the sconcur `default` connection uses. */
-    private function phpRedis(): BaseConnection
+    private function phpRedis(string $prefix = ''): BaseConnection
     {
         $config = (array) config('database.redis.default');
 
@@ -276,8 +344,21 @@ class PhpRedisParityTest extends BaseRedisTestCase
                 'port'     => $config['port'] ?? 6379,
                 'password' => $config['password'] ?? null,
                 'database' => $config['database'] ?? 0,
+                'prefix'   => $prefix,
             ],
             [],
+        );
+    }
+
+    /** The sconcur `default` connection with the prefix of the second run. */
+    private function prefixedSconcur(): Connection
+    {
+        return (new Connector())->connect(
+            config: [
+                ...(array) config('database.redis.default'),
+                'prefix' => self::PREFIX,
+            ],
+            options: [],
         );
     }
 }

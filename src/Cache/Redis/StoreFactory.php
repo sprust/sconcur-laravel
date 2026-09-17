@@ -12,6 +12,9 @@ use SConcur\Laravel\Redis\Connector;
  * The entry names connections of `database.redis`, the way the framework's `redis` store
  * does, and they are built by the facade's Connector without going through RedisManager —
  * so the store is on the feature whatever `database.redis.client` says.
+ *
+ * The connections' key prefix goes in front of the store's own, as it does for RedisStore on
+ * phpredis, so the two stores keep a key under one name.
  */
 readonly class StoreFactory
 {
@@ -51,6 +54,14 @@ readonly class StoreFactory
             lockClient: $lockClient,
             prefix: $prefix,
             serializableClasses: $serializableClasses,
+            connectionPrefix: $this->connector->prefixForConnection(
+                redis: $redis,
+                name: $connection,
+            ),
+            lockConnectionPrefix: $this->connector->prefixForConnection(
+                redis: $redis,
+                name: $lockConnection,
+            ),
         );
     }
 }

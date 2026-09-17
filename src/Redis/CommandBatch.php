@@ -11,8 +11,9 @@ use SConcur\Features\Redis\Pipeline;
  * What `Redis::pipeline()` and `Redis::transaction()` hand to their callback: commands
  * called on it are collected, and nothing is sent until the batch is.
  *
- * The calls take phpredis's signatures, the way the object phpredis hands a pipeline callback
- * does, and the replies come back in phpredis's shape (PhpRedisArguments, PhpRedisReplies).
+ * The calls take phpredis's signatures and get the connection's key prefix, the way the
+ * object phpredis hands a pipeline callback does, and the replies come back in phpredis's
+ * shape (PhpRedisArguments, KeyPrefix, PhpRedisReplies).
  *
  * With a callback the batch is sent as soon as the callback returns, and the replies are
  * what the call answers with. Without one the batch itself is returned, and `exec()` sends
@@ -35,6 +36,7 @@ class CommandBatch
     public function __construct(
         protected readonly Pipeline $pipeline,
         protected readonly bool $atomic,
+        protected readonly string $prefix = '',
     ) {
     }
 
@@ -49,6 +51,14 @@ class CommandBatch
         );
 
         UnsupportedCalls::assertSupported($name);
+
+        if (strcasecmp($method, 'rawCommand') !== 0) {
+            $arguments = KeyPrefix::apply(
+                command: $name,
+                arguments: $arguments,
+                prefix: $this->prefix,
+            );
+        }
 
         $this->pipeline->command(
             name: $name,

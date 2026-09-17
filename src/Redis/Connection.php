@@ -34,6 +34,11 @@ use Throwable;
  *   phpredis moves the cursor through a reference, which a facade call cannot carry;
  * - a status reply `EVAL` returns from a script is the string `'OK'`, not `true`.
  *
+ * The connection's `prefix` goes on the keys, channels and patterns where phpredis puts its
+ * `OPT_PREFIX` (KeyPrefix), and not on `rawCommand()`/`executeRaw()` or on the feature's
+ * own `client()`, which phpredis has no counterpart of. Replies keep the names as the server
+ * holds them, prefix included, as phpredis's do.
+ *
  * A blocking command (`BLPOP`, `XREAD … BLOCK`, …) gets the deadline its wait needs rather
  * than the connection's flat one, which the extension would refuse as shorter than the wait.
  * The limiters of `funnel()` and `throttle()` pause between attempts without freezing the
@@ -52,14 +57,29 @@ class Connection extends BaseConnection
      */
     protected RedisClient $redisClient;
 
-    public function __construct(RedisClient $client)
+    /** What goes in front of every key, channel and pattern; empty for none. */
+    protected string $prefix;
+
+    public function __construct(RedisClient $client, string $prefix = '')
     {
         $this->redisClient = $client;
+        $this->prefix      = $prefix;
     }
 
     public function client(): RedisClient
     {
         return $this->redisClient;
+    }
+
+    /**
+     * phpredis's `_prefix()`: the value with the connection's prefix in front of it, for code
+     * that builds a key name itself — a Lua script's ARGV, a `SORT … BY` pattern.
+     *
+     * @param string $value
+     */
+    public function _prefix($value): string
+    {
+        return $this->prefix . $value;
     }
 
     /**
@@ -501,6 +521,7 @@ class Connection extends BaseConnection
             arguments: $arguments,
             eventMethod: $method,
             eventParameters: $parameters,
+            prefixed: strcasecmp($method, 'rawCommand') !== 0,
         );
     }
 
@@ -518,7 +539,10 @@ class Connection extends BaseConnection
      */
     public function createSubscription($channels, Closure $callback, $method = 'subscribe'): void
     {
-        $names = array_values(array_map(strval(...), (array) $channels));
+        $names = KeyPrefix::names(
+            names: array_values(array_map(strval(...), (array) $channels)),
+            prefix: $this->prefix,
+        );
 
         $subscription = match ($method) {
             'subscribe'  => $this->redisClient->subscribe(channels: $names),
@@ -554,21 +578,32 @@ class Connection extends BaseConnection
 
     /**
      * The one way a command goes out: refused if the feature has no path for it, given the
-     * deadline its wait needs, reported to the events, and answered in phpredis's shape.
+     * prefix on its keys, given the deadline its wait needs, reported to the events, and
+     * answered in phpredis's shape.
      *
      * @param list<mixed>                  $arguments       the raw arguments
      * @param array<array-key, mixed>|null $eventParameters what the caller passed, for the events
+     * @param bool                         $prefixed        false for rawCommand(), which phpredis sends as it is
      */
     private function execute(
         string $method,
         array $arguments,
         ?string $eventMethod = null,
         ?array $eventParameters = null,
+        bool $prefixed = true,
     ): mixed {
         UnsupportedCalls::assertSupported($method);
 
         $eventMethod ??= strtolower($method);
         $eventParameters ??= $arguments;
+
+        if ($prefixed) {
+            $arguments = KeyPrefix::apply(
+                command: $method,
+                arguments: $arguments,
+                prefix: $this->prefix,
+            );
+        }
 
         $startedAt = microtime(true);
 
@@ -634,6 +669,7 @@ class Connection extends BaseConnection
         $commandBatch = new CommandBatch(
             pipeline: $this->redisClient->pipeline(),
             atomic: $atomic,
+            prefix: $this->prefix,
         );
 
         if ($callback === null) {
