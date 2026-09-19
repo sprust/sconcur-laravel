@@ -16,6 +16,7 @@ works, and the loop and the stop are written once.
 
 - [A task](#a-task)
 - [The tick result and the pauses](#the-tick-result-and-the-pauses)
+- [Events](#events)
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [One copy of a task](#one-copy-of-a-task)
@@ -79,6 +80,35 @@ An exception out of a tick is reported by the pool through `ExceptionHandler`, w
 the log and turned into `Failed`. It does not escape: `WaitGroup::iterate()` throws the
 first exception of any member and stops the group in `finally`, so one task's escaping
 exception would put out all the others.
+
+## Events
+
+Every tick raises a pair of events, so the application observes the pool without wrapping
+each of its tasks in the same try/catch.
+
+| Event | When | Fields |
+| --- | --- | --- |
+| `SConcur\Laravel\Tasks\Events\TaskTickStarted` | before the tick | `name` |
+| `SConcur\Laravel\Tasks\Events\TaskTickFinished` | after it, whatever ended it | `name`, `result`, `exception` |
+
+`exception` is `null` when the tick returned on its own. When it threw, it holds what was
+thrown and `result` is `TickResultEnum::Failed`. The finished event is raised for a tick
+the scheduler unwound as well — a stop or a blown deadline — before the unwind carries on.
+
+```php
+use Illuminate\Support\Facades\Event;
+use SConcur\Laravel\Tasks\Events\TaskTickFinished;
+
+Event::listen(function (TaskTickFinished $event): void {
+    if ($event->exception !== null) {
+        Metrics::increment('task.failed', ['task' => $event->name]);
+    }
+});
+```
+
+A listener cannot stop the pool: an exception out of a listener is reported through
+`ExceptionHandler`, written to the log, and the loop carries on — the same treatment a
+failed tick gets, and for the same reason.
 
 ## Configuration
 

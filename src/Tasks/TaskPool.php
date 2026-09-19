@@ -6,10 +6,13 @@ namespace SConcur\Laravel\Tasks;
 
 use Closure;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Events\Dispatcher;
 use SConcur\Exceptions\CoroutineTimeoutException;
 use SConcur\Exceptions\FlowStoppedException;
 use SConcur\Laravel\Support\ProcessMemory;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
+use SConcur\Laravel\Tasks\Events\TaskTickFinished;
+use SConcur\Laravel\Tasks\Events\TaskTickStarted;
 use SConcur\Scheduler\Scheduler;
 use SConcur\WaitGroup;
 use Throwable;
@@ -42,6 +45,7 @@ class TaskPool
         protected TaskPoolOptions $options,
         protected TaskPoolLogger $logger,
         protected ExceptionHandler $exceptions,
+        protected Dispatcher $events,
         protected ProcessMemory $processMemory = new ProcessMemory(),
     ) {
     }
@@ -258,20 +262,69 @@ class TaskPool
         $this->sleeper->sleep($definition->idle, $state->parkInterruptFor($name));
     }
 
+    /**
+     * The two events around a tick are raised here rather than in the loop so that they
+     * hold what only this method knows: what the tick returned, and what it threw if it
+     * threw. The finished one goes in `finally`, which is what makes it unconditional —
+     * it is raised for a tick the scheduler unwound as well, before the unwind carries on.
+     */
     protected function tick(string $name): TickResultEnum
     {
+        $this->dispatch($name, new TaskTickStarted(name: $name));
+
+        $result  = TickResultEnum::Failed;
+        $failure = null;
+
         try {
-            return $this->registry->task($name)->tick();
+            $result = $this->registry->task($name)->tick();
+
+            return $result;
         } catch (FlowStoppedException | CoroutineTimeoutException $exception) {
             // A stop and a blown deadline are the scheduler unwinding this coroutine on
             // purpose. Catching them to carry on would be fighting it.
+            $failure = $exception;
+
             throw $exception;
         } catch (Throwable $exception) {
+            $failure = $exception;
+
             $this->exceptions->report($exception);
 
             $this->logger->log($name, 'tick failed: ' . $exception::class . ': ' . $exception->getMessage());
 
             return TickResultEnum::Failed;
+        } finally {
+            $this->dispatch($name, new TaskTickFinished(
+                name: $name,
+                result: $result,
+                exception: $failure,
+            ));
+        }
+    }
+
+    /**
+     * Raises one of the tick events without letting a listener stop the pool.
+     *
+     * A listener is application code, and an exception escaping dispatch() would leave
+     * the tick the same way the tick's own would: WaitGroup::iterate() rethrows it and
+     * takes every other task of the pool down with it. So it is reported and logged,
+     * exactly like a failed tick, and the loop carries on. A deliberate unwind is not a
+     * listener's failure and still passes through.
+     */
+    protected function dispatch(string $name, object $event): void
+    {
+        try {
+            $this->events->dispatch($event);
+        } catch (FlowStoppedException | CoroutineTimeoutException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            $this->exceptions->report($exception);
+
+            $this->logger->log(
+                $name,
+                'listener of ' . $event::class . ' failed: '
+                    . $exception::class . ': ' . $exception->getMessage(),
+            );
         }
     }
 
