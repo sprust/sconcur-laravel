@@ -748,6 +748,22 @@ job: a worker that was away for a second should miss the event rather than be ha
 minute of them at once. An application that needs guarantees needs a queue rather than a
 broadcast.
 
+The publishing side keeps one connection and one channel for the life of the process: a
+process broadcasts in bursts, and a channel per message would be a dial per message. That
+channel is not kept unconditionally. The extension collects a channel with no consumers that
+has run no command for half an hour and tells this side nothing — the handle goes on looking
+open, and the publish that ends a long silence fails on a channel that is no longer there,
+with `No channel available`. So the bus gives a channel up once it has been idle for ten
+minutes, before it is handed out rather than after it fails, and a publish that fails on a
+kept channel is tried once more on a channel that is there. A publish that opened its own
+channel is not tried again: what it failed on is the broker's answer, and a second attempt
+arrives at the same one.
+
+A retried publish can reach the broker twice, because a command that failed on its way out
+may still have been carried out. A broadcast is therefore delivered at least once rather
+than exactly once. For a notification that is the cheaper side of the trade: the other side
+of it is the silence the retry exists to prevent.
+
 The `local` driver (`SCONCUR_WS_BUS_DRIVER=local`) delivers nothing between processes and
 is good for tests only.
 
