@@ -143,7 +143,8 @@ src/Filesystem/                 — SconcurLocalFilesystemAdapter + SconcurLocal
                                   coroutine, native outside it and on a failure), LocalPaths
                                   (the native checks made before the feature)
 src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
-src/Support/Coroutine           — whether the caller runs in a coroutine
+src/Support/Coroutine           — whether the caller runs in a coroutine the extension drives
+                                  and may still wait in
 src/Support/ProcessMemory       — the resident set size of the process, for memory limits
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
@@ -230,22 +231,24 @@ Points worth knowing before changing anything:
   (`MeasuresStallsTrait::longestStallMs()`), and a test proves the measurement sees a native
   pause.
 - **The Files feature under Laravel's filesystem answers like the native code, failures
-  included.** `FilesFeatureCall` runs the feature only inside a coroutine, and a
-  `FilesException` hands the call to the parent, which fails the way callers have always
-  seen. `FileStoppedException`, `FileTimeoutException` and `InvalidFileArgumentException`
-  are not handed over. What the feature would do differently stays native, decided inside
-  the coroutine only (a `stat` each): a copy or move onto the same file (path, symlink, hard
-  link — `LocalPaths::isSameFile()`), a move across filesystems (`crossesDevices()`), a
-  symlink to delete. Every change on the feature ends with `LocalPaths::forgetStats()`:
-  PHP's stat cache does not see the feature, and `StatCacheTest` catches a stale answer.
-  The `files` binding is replaced only
-  under `sconcur.filesystem.files`: the framework resolves it on every request, and its
-  metadata calls stay native. The disk writes on the feature only with `'lock' => 0` — the
-  feature has no `flock`. `FilesystemParityTest` and `SconcurLocalDiskParityTest` require
-  the same answer, exception and files as the native implementation, and a fallback would
-  pass them; `FeaturePathTest` proves the feature did the work, with a `file://` wrapper
-  (`NativeFileCallSpy`) that records native file operations. A new override needs a case in
-  both.
+  included.** `FilesFeatureCall` runs the feature only where `Support\Coroutine::isActive()`
+  holds — a coroutine the extension drives and has not let go (a `finally` run by
+  `WaitGroup::stop()` would suspend for good) — and only without `open_basedir`, which the
+  feature does not see. A `FilesException` hands the call to the parent, which fails the way
+  callers have always seen; `FileStoppedException`, `FileTimeoutException` and
+  `InvalidFileArgumentException` are not handed over. What the feature would do differently
+  stays native, decided inside the coroutine only (`LocalPaths`): anything that is not a
+  regular file, a copy onto the same file (path, symlink, hard link), a symlink to delete.
+  `move` is not overridden at all. Every change on the feature ends with
+  `LocalPaths::forgetStats()`: PHP's stat and realpath caches do not see the feature. The
+  `files` binding is replaced only under `sconcur.filesystem.files`: the framework resolves
+  it on every request, and its metadata calls stay native. The disk writes on the feature
+  only with `'lock' => 0` — the feature has no `flock`. `FilesystemParityTest` and
+  `SconcurLocalDiskParityTest` require the same answer, exception and files as the native
+  implementation, and a fallback would pass them; `FeaturePathTest` proves the feature did
+  the work, with a `file://` wrapper (`NativeFileCallSpy`) that records native file
+  operations. A new override needs a case in both. The known differences that remain are
+  listed in `docs/filesystem.md`.
 - **`Redis::` on the sconcur client must answer like `PhpRedisConnection`.** The facade is a
   thin layer: past Laravel's ~25 overrides a call goes to phpredis's own method, so the
   contract applications rely on is phpredis's signatures and reply shapes (status → `true`,

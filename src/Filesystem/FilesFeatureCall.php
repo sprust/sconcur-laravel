@@ -15,7 +15,7 @@ use SConcur\Laravel\Support\Coroutine;
  * else, keeping the native contract either way.
  *
  * Outside a coroutine the feature would only add a boundary crossing to the same work, so
- * the native call runs. Inside one the feature runs, and a failure of it hands the call
+ * the native call runs — and so it does under open_basedir, which the feature does not see. Inside one the feature runs, and a failure of it hands the call
  * to the native implementation: that is what answers the failure the way callers have
  * always seen it — the `false`, the warning Laravel turns into an ErrorException, the
  * Flysystem exception with the native message — rather than a Files exception nobody
@@ -39,7 +39,9 @@ class FilesFeatureCall
      */
     public static function run(Closure $feature, Closure $native): mixed
     {
-        if (!Coroutine::isActive()) {
+        // open_basedir is enforced by PHP's own file functions; the feature opens files in
+        // the extension, past it, so a restricted process keeps to the native calls.
+        if (!Coroutine::isActive() || ini_get('open_basedir') !== '') {
             return $native();
         }
 

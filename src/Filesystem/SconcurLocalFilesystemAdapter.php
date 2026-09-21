@@ -26,14 +26,15 @@ use SConcur\Features\Files\FileWriteMode;
  * where the Files feature pays taken off the PHP thread inside a coroutine. Outside a
  * coroutine every method is the parent's, so the disk is the `local` disk there.
  *
- * On the feature: read, copy, move, delete, deleteDirectory, the metadata calls (one stat
- * each), checksum for md5/sha1/sha256/sha512, and write and writeStream when the disk takes
- * no lock (`'lock' => 0`) — the feature has no flock, and a write under LOCK_EX stays the
- * parent's so the disk answers what `local` answers. A copy or move onto the same file
- * (by path, symlink or hard link), a move across filesystems and a delete of a symlink
- * stay the parent's too; those checks are made inside the coroutine only.
+ * On the feature: read, copy, delete, deleteDirectory, the metadata calls (one stat each),
+ * checksum for md5/sha1/sha256/sha512, and write and writeStream when the disk takes no
+ * lock (`'lock' => 0`) — the feature has no flock, and a write under LOCK_EX stays the
+ * parent's so the disk answers what `local` answers. Also the parent's: move (one
+ * rename(2), nothing to gain), anything that is not a regular file (a directory as a
+ * copy's source, a FIFO, a device, a /proc entry), a copy onto the same file by another
+ * name, and a symlink to delete; those checks are made inside the coroutine only.
  *
- * The parent's: readStream (its contract is a PHP resource), listContents (a feature
+ * The parent's as well: readStream (its contract is a PHP resource), listContents (a feature
  * listing carries no permissions, and every entry needs its visibility), createDirectory,
  * setVisibility and mimeType.
  *
@@ -89,6 +90,13 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
             feature: function () use ($path, $contents, $config): void {
                 $location = $this->prepareWrite(path: $path, config: $config);
 
+                // A directory, a device or a FIFO in the way is the parent's to answer.
+                if (!LocalPaths::isRegularOrMissing($location)) {
+                    parent::write($path, $contents, $config);
+
+                    return;
+                }
+
                 // 0666 because the umask narrows it, as it narrows file_put_contents().
                 Files::write(
                     path: $location,
@@ -120,12 +128,22 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
         // untouched, so a failure to open is still the parent's to answer. Null when the
         // parent has written the file.
         $fileWriter = FilesFeatureCall::run(
-            feature: fn(): FileWriter => Files::openWriter(
-                path: $this->prepareWrite(path: $path, config: $config),
-                mode: FileWriteMode::Replace,
-                permissions: 0666,
-                timeoutMs: $this->timeoutMs,
-            ),
+            feature: function () use ($path, $contents, $config): ?FileWriter {
+                $location = $this->prepareWrite(path: $path, config: $config);
+
+                if (!LocalPaths::isRegularOrMissing($location)) {
+                    parent::writeStream($path, $contents, $config);
+
+                    return null;
+                }
+
+                return Files::openWriter(
+                    path: $location,
+                    mode: FileWriteMode::Replace,
+                    permissions: 0666,
+                    timeoutMs: $this->timeoutMs,
+                );
+            },
             native: function () use ($path, $contents, $config): ?FileWriter {
                 parent::writeStream($path, $contents, $config);
 
@@ -139,11 +157,12 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
 
         // Read here rather than copied from the file behind the stream: a stream filter
         // changes the bytes on their way out, and nothing in the stream's metadata says
-        // one is attached. Read to its end, as file_put_contents() leaves it.
+        // one is attached. Read until a read gives nothing, as file_put_contents() does —
+        // at the end of the stream, and at once on a non-blocking one that has no data.
         error_clear_last();
 
         try {
-            while (!feof($contents)) {
+            while (true) {
                 // Silenced like the parent's @file_put_contents(), so a read failure is the
                 // UnableToWriteFile it raises rather than a notice turned into an exception.
                 $chunk = @fread($contents, self::STREAM_CHUNK_BYTES);
@@ -161,9 +180,11 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
                     throw UnableToWriteFile::atLocation($path, $readError);
                 }
 
-                if ($chunk !== '') {
-                    $fileWriter->write($chunk);
+                if ($chunk === '') {
+                    break;
                 }
+
+                $fileWriter->write($chunk);
             }
 
             $fileWriter->close();
@@ -172,6 +193,15 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
         } catch (FileStoppedException|FileTimeoutException $exception) {
             throw $exception;
         } catch (FilesException $exception) {
+            // The session is closed where it can be — it would otherwise hold the file
+            // until the coroutine ends — and a writer the failure has spent refuses.
+            try {
+                $fileWriter->close();
+            } catch (FilesException) {
+            }
+
+            LocalPaths::forgetStats();
+
             // The stream has been read from and cannot be read again, so this failure is
             // not the parent's to repeat.
             throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
@@ -183,11 +213,21 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
     public function read(string $path): string
     {
         return FilesFeatureCall::run(
-            feature: fn(): string => Files::read(
-                path: $this->pathPrefixer->prefixPath($path),
-                maxReadBytes: 0,
-                timeoutMs: $this->timeoutMs,
-            ),
+            feature: function () use ($path): string {
+                $location = $this->pathPrefixer->prefixPath($path);
+
+                // A /proc entry reports a size of zero and a FIFO has none; the feature
+                // reads by the size, the parent to the end.
+                if (!LocalPaths::isRegularFile($location)) {
+                    return parent::read($path);
+                }
+
+                return Files::read(
+                    path: $location,
+                    maxReadBytes: 0,
+                    timeoutMs: $this->timeoutMs,
+                );
+            },
             native: fn(): string => parent::read($path),
         );
     }
@@ -206,8 +246,13 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
 
         FilesFeatureCall::run(
             feature: function () use ($source, $destination, $destinationLocation, $sourceLocation, $config): void {
-                // The same file under another name — a symlink, a hard link — as well.
-                if (LocalPaths::isSameFile(first: $sourceLocation, second: $destinationLocation)) {
+                // A source that is not a regular file, a destination that is something
+                // else, and the same file under another name — a symlink, a hard link.
+                if (
+                    !LocalPaths::isRegularFile($sourceLocation)
+                    || !LocalPaths::isRegularOrMissing($destinationLocation)
+                    || LocalPaths::isSameFile(first: $sourceLocation, second: $destinationLocation)
+                ) {
                     parent::copy($source, $destination, $config);
 
                     return;
@@ -243,46 +288,6 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
             },
             native: function () use ($source, $destination, $config): void {
                 parent::copy($source, $destination, $config);
-            },
-        );
-    }
-
-    public function move(string $source, string $destination, Config $config): void
-    {
-        FilesFeatureCall::run(
-            feature: function () use ($source, $destination, $config): void {
-                $sourceLocation      = $this->pathPrefixer->prefixPath($source);
-                $destinationLocation = $this->pathPrefixer->prefixPath($destination);
-
-                $this->ensureDirectoryExists(
-                    dirname($destinationLocation),
-                    $this->directoryPermissions($config->get(Config::OPTION_DIRECTORY_VISIBILITY)),
-                );
-
-                // One file under two names, or a move across filesystems — see LocalPaths.
-                // Asked once the target directory exists, so its device can be read.
-                if (
-                    $sourceLocation === $destinationLocation
-                    || LocalPaths::isSameFile(first: $sourceLocation, second: $destinationLocation)
-                    || LocalPaths::crossesDevices(source: $sourceLocation, target: $destinationLocation)
-                ) {
-                    parent::move($source, $destination, $config);
-
-                    return;
-                }
-
-                Files::move(
-                    source: $sourceLocation,
-                    destination: $destinationLocation,
-                    timeoutMs: $this->timeoutMs,
-                );
-
-                LocalPaths::forgetStats();
-
-                $this->applyVisibility(path: $destination, config: $config);
-            },
-            native: function () use ($source, $destination, $config): void {
-                parent::move($source, $destination, $config);
             },
         );
     }
@@ -381,9 +386,11 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
             feature: function () use ($path): FileAttributes {
                 $fileStat = $this->stat($path);
 
-                // filemtime() answers whole seconds, rounded down.
-                return $fileStat->exists
-                    ? new FileAttributes($path, null, null, (int) floor($fileStat->modifiedAtMs / 1000))
+                // filemtime() answers whole seconds, rounded down. A stamp before 1970 is
+                // the parent's: the feature has already cut its milliseconds toward zero,
+                // so rounding down here would land a second late.
+                return $fileStat->exists && $fileStat->modifiedAtMs >= 0
+                    ? new FileAttributes($path, null, null, intdiv($fileStat->modifiedAtMs, 1000))
                     : parent::lastModified($path);
             },
             native: fn(): FileAttributes => parent::lastModified($path),
@@ -418,11 +425,19 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
         }
 
         return FilesFeatureCall::run(
-            feature: fn(): string => Files::hashFile(
-                path: $this->pathPrefixer->prefixPath($path),
-                algorithm: $fileHashAlgorithm,
-                timeoutMs: $this->timeoutMs,
-            ),
+            feature: function () use ($path, $config, $fileHashAlgorithm): string {
+                $location = $this->pathPrefixer->prefixPath($path);
+
+                if (!LocalPaths::isRegularFile($location)) {
+                    return parent::checksum($path, $config);
+                }
+
+                return Files::hashFile(
+                    path: $location,
+                    algorithm: $fileHashAlgorithm,
+                    timeoutMs: $this->timeoutMs,
+                );
+            },
             native: fn(): string => parent::checksum($path, $config),
         );
     }

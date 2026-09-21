@@ -22,27 +22,34 @@ itself does is in the library's `vendor/sconcur/sconcur/docs/files.md`.
 ## When the feature is used
 
 The gain is where the bytes never cross into PHP — a copy, a hash — and where a slow disk
-would otherwise hold the whole worker. On a
-small file with a warm page cache the native call is faster, and a call outside a
-coroutine has nothing to yield to. So both places follow one rule:
+would otherwise hold the whole worker. On a small file with a warm page cache the native
+call is faster, and a call outside a coroutine has nothing to yield to. So both places
+follow one rule:
 
-- inside a coroutine, the operations listed below go to the feature;
-- outside a coroutine (boot, artisan, the tests' own process) every call is the native one;
+- in a coroutine the extension drives and may still wait in, the operations listed below
+  go to the feature;
+- everywhere else the call is the native one: outside a coroutine (boot, artisan), in a
+  fiber another library started, in a coroutine being unwound — a `finally` block run by
+  `WaitGroup::stop()` or a shutdown, where a suspension would never be resumed — and in a
+  process with `open_basedir` set, which PHP enforces and the feature does not see;
 - a failure on the feature hands the call to the native implementation, which answers it
   the way it always has: the `false`, the warning Laravel turns into an `ErrorException`,
   the Flysystem exception with the native message. A failing operation is done twice.
 
 Three failures are not handed over and reach the caller as they are:
-`FileStoppedException` (the coroutine is being unwound), `FileTimeoutException` (a deadline
-the application set, see `timeout_ms` below) and `InvalidFileArgumentException` (a call the
-feature refuses as malformed — a bug, not a condition of the disk).
+`FileStoppedException` (the extension stopped the operation), `FileTimeoutException` (a
+deadline the application set, see `timeout_ms` below) and `InvalidFileArgumentException` (a
+call the feature refuses as malformed — a bug, not a condition of the disk).
 
-What the feature would do differently stays native. A copy or a move onto the same file —
-by path, through a symlink or a hard link — goes to the native code, which refuses the copy
-rather than truncating the file it is about to read. A move across filesystems goes there
-too: `rename()` does it as a copy through the target path, into the file a symlink there
-points at and with the source's mode, where the feature would replace the target. These
-checks cost a `stat` and are made inside a coroutine only.
+What the feature would do differently stays native as well, decided inside a coroutine
+only, at a `stat` or two per call:
+
+- anything that is not a regular file: a directory as the source of a copy (the feature
+  would truncate the destination before it failed), a directory, a FIFO or a device where
+  a write or a copy lands, a FIFO or a `/proc` entry to read or hash (the feature reads by
+  the size, and those report none);
+- a copy onto the same file — by path, through a symlink or a hard link — which the native
+  code refuses, where the feature would truncate the file it is about to read.
 
 `tests/Feature/Filesystem/` runs every covered call through the native implementation and
 through the package's one on the same tree, inside a coroutine and outside it, and requires
@@ -77,25 +84,33 @@ deadline of one call; `0` is none, as natively. The disk is the framework's
 
 | Operation | On the feature |
 |---|---|
-| `get`, `read` | `Files::read`, with no size limit, as `file_get_contents` has none |
+| `get`, `read` | `Files::read`, with no size limit, as `file_get_contents` has none; at its peak the file is held twice, in the extension and in PHP |
 | `put`, `writeStream` | only with `'lock' => 0`, see below |
 | `copy` | `Files::copy`; the visibility is kept as the `local` disk keeps it |
-| `move` | `Files::move`; a move across filesystems stays native |
 | `delete`, `deleteDirectory` | `Files::delete`, `Files::removeDirectory`; a symlink stays native — the native code decides by what it points at, the feature by the link |
-| `fileExists`, `directoryExists`, `size`, `lastModified`, `getVisibility` | one `Files::stat` each; `exists` asks `fileExists` and then `directoryExists` |
+| `fileExists`, `directoryExists`, `size`, `lastModified`, `getVisibility` | one `Files::stat` each; `exists` asks `fileExists` and then `directoryExists`; a `lastModified` before 1970 is native |
 | `checksum` | `Files::hashFile` for `md5`, `sha1`, `sha256`, `sha512`; any other algorithm is native |
 
-Native on this disk too: `readStream` (its contract is a PHP resource), the listings
-(`files`, `allFiles`, `directories` — a feature listing carries no permissions, and every
-entry needs its visibility), `makeDirectory`, `setVisibility` and `mimeType`.
+Native on this disk too: `move` (within one filesystem it is one `rename(2)` with nothing
+to gain, and across filesystems `rename()` copies through the target path — into the file
+a symlink there points at, with the source's mode — where the feature would replace the
+target), `readStream` (its contract is a PHP resource), the listings (`files`, `allFiles`,
+`directories` — a feature listing carries no permissions, and every entry needs its
+visibility), `makeDirectory`, `setVisibility` and `mimeType`.
 
 A `local` disk writes with `LOCK_EX` unless `lock` says otherwise, and the feature takes no
 locks. So under the default lock `put` and `writeStream` stay native and the disk writes
 exactly as `local` does; `'lock' => 0` puts them on the feature, again exactly as a `local`
-disk with `'lock' => 0` writes — in place, without a lock.
+disk with `'lock' => 0` writes — in place, without a lock. Operations on the feature from
+different coroutines of one worker run side by side, so two of them on one file race the
+way two processes on a `local` disk race: a write without a lock can interleave with
+another, and a read can meet a file truncated for a write. The protection is the one a
+multi-process application needs anyway — `lock`, an atomic write, a lock of its own.
 
 `writeStream` reads the stream in chunks and hands each to a writer of the feature, so a
-stream filter applies as it does natively and the stream is left at its end. The bytes are
+stream filter applies as it does natively and the stream is left at its end. Reading stops
+at the first read that gives nothing, as `file_put_contents()` stops — at the end of the
+stream, and at once on a non-blocking one with no data waiting. The bytes are
 read rather than copied from the file behind the stream, because nothing in a stream's
 metadata says a filter is attached. Opening the writer can still fail over to the native
 code; once reading has started it cannot — the stream cannot be read twice. A stream that
@@ -125,14 +140,13 @@ own, and only these calls change:
 | Method | On the feature |
 |---|---|
 | `File::copy` | `Files::copy` |
-| `File::move` | `Files::move`; a move across filesystems stays native |
 | `File::hash` | `Files::hashFile` for `md5`, `sha1`, `sha256`, `sha512`; any other algorithm is native |
-| `File::replace` | `Files::writeAtomic`, with the permissions the native method gives; contents other than a string (a resource, an array) stay native |
+| `File::replace` | `Files::writeAtomic`, with the permissions the native method gives; contents other than a string (a resource, an array) and a mode other than plain permission bits (setuid/setgid/sticky, type bits from `fileperms()`, a string) stay native |
 
 A path may be a Stringable object (`SplFileInfo`, `UploadedFile`), as natively. A path with
 a stream wrapper (`s3://`, `phar://`) stays native.
 
-Native on purpose: the metadata calls (`exists`, `isFile`, `lastModified`, `size`), which
+Native on purpose: `move`, for the reasons given for the disk; the metadata calls (`exists`, `isFile`, `lastModified`, `size`), which
 the framework makes on every request and a boundary crossing would only slow down;
 everything with a lock (`get`, `put`, `append` with `$lock`, `sharedGet`); `getRequire` and
 `requireOnce`, which are `include`; `link`, `glob`, `isReadable`, `isWritable`; the
@@ -152,12 +166,15 @@ What stays different, and why:
   or a copy, where the native call leaves it as it was, so the package never answers from a
   stale entry where the native code would.
 - An operation can be cut short. A native call runs to its end; one on the feature ends
-  with `FileStoppedException` when its coroutine is unwound (`WaitGroup::stop()`, a worker
-  stopping), and with `FileTimeoutException` past a `timeout_ms` above zero.
+  with the library's `FlowStoppedException` when its coroutine is unwound under it
+  (`WaitGroup::stop()`, a worker stopping), and with `FileTimeoutException` past a
+  `timeout_ms` above zero. A call made once the unwinding has begun runs natively.
 - A failure is repeated natively from where the feature left the disk. The error the caller
   gets is the native one, but the first attempt may have done part of the work — a
   `deleteDirectory` that removed some entries before it failed — so what is left can
   differ from a run that was native throughout.
+- Operations from different coroutines of one worker run side by side on one file, as the
+  operations of different processes do — see the disk's `lock` above.
 - The same-file check and the operation are two steps. A path swapped for a link to the
   source between them would have the copy truncate the source; closing that window needs
   the library to compare the open files.

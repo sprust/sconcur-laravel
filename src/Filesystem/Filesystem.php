@@ -11,15 +11,17 @@ use SConcur\Features\Files\FileWriteMode;
 
 /**
  * The `files` binding (the File facade) with the operations where the Files feature pays
- * taken off the PHP thread inside a coroutine: copy and move, whose bytes never cross into
- * PHP, hashing, whose read loop runs on the runtime, and replace, which is the feature's
- * atomic write. Everything else is the framework's own.
+ * taken off the PHP thread inside a coroutine: copy, whose bytes never cross into PHP,
+ * hashing, whose read loop runs on the runtime, and replace, which is the feature's atomic
+ * write. Everything else is the framework's own.
  *
- * Deliberately not here: the metadata calls (exists, lastModified, …), which the view
- * finder, the Blade compiler and the translator make on every request and which a boundary
- * crossing would only slow down; everything that takes a lock, which the feature does not
- * have; getRequire/requireOnce, which are `include`; and the Finder-based listings, whose
- * contract is Symfony's SplFileInfo.
+ * Deliberately not here: move, which within one filesystem is one rename(2) with nothing
+ * to gain and across filesystems a copy the native call does differently; the metadata
+ * calls (exists, lastModified, …), which the view finder, the Blade compiler and the
+ * translator make on every request and which a boundary crossing would only slow down;
+ * everything that takes a lock, which the feature does not have; getRequire/requireOnce,
+ * which are `include`; and the Finder-based listings, whose contract is Symfony's
+ * SplFileInfo.
  *
  * Every override answers exactly as the parent does, failures included: see
  * FilesFeatureCall.
@@ -37,15 +39,20 @@ class Filesystem extends IlluminateFilesystem
         $path   = (string) $path;
         $target = (string) $target;
 
-        if (!$this->isFeaturePair(path: $path, target: $target)) {
+        if (LocalPaths::isStreamWrapperPath($path) || LocalPaths::isStreamWrapperPath($target) || $path === $target) {
             return parent::copy($path, $target);
         }
 
         return FilesFeatureCall::run(
             feature: function () use ($path, $target): bool {
-                // copy() onto the same file — through a symlink or a hard link — refuses
-                // and writes nothing; the feature would truncate the source it reads.
-                if (LocalPaths::isSameFile(first: $path, second: $target)) {
+                // A source that is not a regular file, a target that is something else, and
+                // one file under two names (copy() refuses that and writes nothing, the
+                // feature would truncate the source it reads) are the parent's.
+                if (
+                    !LocalPaths::isRegularFile($path)
+                    || !LocalPaths::isRegularOrMissing($target)
+                    || LocalPaths::isSameFile(first: $path, second: $target)
+                ) {
                     return parent::copy($path, $target);
                 }
 
@@ -67,38 +74,6 @@ class Filesystem extends IlluminateFilesystem
         );
     }
 
-    public function move($path, $target)
-    {
-        $path   = (string) $path;
-        $target = (string) $target;
-
-        if (!$this->isFeaturePair(path: $path, target: $target)) {
-            return parent::move($path, $target);
-        }
-
-        return FilesFeatureCall::run(
-            feature: function () use ($path, $target): bool {
-                if (
-                    LocalPaths::isSameFile(first: $path, second: $target)
-                    || LocalPaths::crossesDevices(source: $path, target: $target)
-                ) {
-                    return parent::move($path, $target);
-                }
-
-                Files::move(
-                    source: $path,
-                    destination: $target,
-                    timeoutMs: $this->timeoutMs,
-                );
-
-                LocalPaths::forgetStats();
-
-                return true;
-            },
-            native: fn(): bool => parent::move($path, $target),
-        );
-    }
-
     public function hash($path, $algorithm = 'md5')
     {
         $path = (string) $path;
@@ -110,47 +85,66 @@ class Filesystem extends IlluminateFilesystem
         }
 
         return FilesFeatureCall::run(
-            feature: fn(): string => Files::hashFile(
-                path: $path,
-                algorithm: $fileHashAlgorithm,
-                timeoutMs: $this->timeoutMs,
-            ),
+            feature: fn(): string|false => LocalPaths::isRegularFile($path)
+                ? Files::hashFile(
+                    path: $path,
+                    algorithm: $fileHashAlgorithm,
+                    timeoutMs: $this->timeoutMs,
+                )
+                : parent::hash($path, $algorithm),
             native: fn(): string|false => parent::hash($path, $algorithm),
         );
     }
 
     /**
      * @param string|resource|array<array-key, mixed> $content what file_put_contents() takes
+     * @param int|string|null                         $mode    what chmod() takes, a numeric
+     *                                                         string included
      */
     public function replace($path, $content, $mode = null)
     {
         $path = (string) $path;
 
-        // file_put_contents() takes a resource or an array as well; those stay the parent's.
-        if (!is_string($content)) {
-            // @phpstan-ignore argument.type (the parent's PHPDoc says string; file_put_contents() takes this too)
-            parent::replace($path, $content, $mode);
-
-            return;
-        }
-
         // The parent's default: tempnam() creates the file 0600 and it chmods it to this.
         $permissions = $mode ?? (0777 - umask());
 
-        // 0 is "keep the target's bits" to the feature and chmod 000 to the parent.
-        if ($permissions === 0 || LocalPaths::isStreamWrapperPath($path)) {
+        // Stay the parent's: contents file_put_contents() takes besides a string (a
+        // resource, an array); a mode that is not plain permission bits — 0, which the
+        // feature reads as "keep the target's", setuid/setgid/sticky, which the parent's
+        // write after its chmod clears, type bits from fileperms(), a string; and a stream
+        // wrapper path.
+        if (
+            !is_string($content)
+            || !is_int($permissions)
+            || $permissions < 1
+            || $permissions > 0777
+            || LocalPaths::isStreamWrapperPath($path)
+        ) {
+            // The parent's PHPDoc says a string and an int; file_put_contents() and chmod() take these too.
+            // @phpstan-ignore argument.type, argument.type
             parent::replace($path, $content, $mode);
 
             return;
         }
 
+        // Past the check above the mode is an int or the default.
+        $mode = is_int($mode) ? $mode : null;
+
         FilesFeatureCall::run(
-            feature: function () use ($path, $content, $permissions): void {
+            feature: function () use ($path, $content, $mode, $permissions): void {
                 // The parent writes through a symlink rather than over it, and so does this.
                 clearstatcache(true, $path);
 
+                $target = realpath($path) ?: $path;
+
+                if (!LocalPaths::isRegularOrMissing($target)) {
+                    parent::replace($path, $content, $mode);
+
+                    return;
+                }
+
                 Files::writeAtomic(
-                    path: realpath($path) ?: $path,
+                    path: $target,
                     contents: $content,
                     permissions: $permissions,
                     timeoutMs: $this->timeoutMs,
@@ -162,17 +156,5 @@ class Filesystem extends IlluminateFilesystem
                 parent::replace($path, $content, $mode);
             },
         );
-    }
-
-    /**
-     * Both paths are local files the feature can reach, and not literally one path. The
-     * checks that need a stat — one file under two names, two filesystems — are made inside
-     * the coroutine, where the feature would otherwise run.
-     */
-    protected function isFeaturePair(string $path, string $target): bool
-    {
-        return !LocalPaths::isStreamWrapperPath($path)
-            && !LocalPaths::isStreamWrapperPath($target)
-            && $path !== $target;
     }
 }

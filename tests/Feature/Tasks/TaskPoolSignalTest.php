@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Tests\Feature\Tasks;
 
 use PHPUnit\Framework\Attributes\Test;
+use SConcur\Laravel\Tasks\Control\ControlActionEnum;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
 use SConcur\Laravel\Tasks\CooperativeSleeper;
 use SConcur\Laravel\Tasks\TaskPoolController;
@@ -70,6 +71,25 @@ class TaskPoolSignalTest extends BaseTestCase
                 masterPid: 4711,
                 taskPoolState: $taskPoolState,
                 logged: 'signal again',
+            ),
+        );
+    }
+
+    /**
+     * The other order: the watchdog's signal first, then the operator's stop during its
+     * drain. The stop was asked for, so the pool stays down.
+     */
+    #[Test]
+    public function aStopDuringASignalsDrainCancelsTheRestart(): void
+    {
+        $taskPoolState = new TaskPoolState([]);
+
+        $this->getApp()->make(ControlChannel::class)->send(ControlActionEnum::Stop);
+
+        self::assertFalse(
+            $this->restartWantedAfterASignal(
+                masterPid: 4711,
+                taskPoolState: $taskPoolState,
             ),
         );
     }

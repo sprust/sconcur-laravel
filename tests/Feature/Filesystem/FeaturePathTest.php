@@ -108,20 +108,10 @@ class FeaturePathTest extends BaseFilesystemTestCase
                 $file,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy($root . '/file.txt', $root . '/copy.txt'),
             ],
-            'File::move' => [
-                'files',
-                $file,
-                static fn(IlluminateFilesystem $files, string $root): mixed => $files->move($root . '/file.txt', $root . '/moved.txt'),
-            ],
             'File::copy onto an existing file' => [
                 'files',
                 $file,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy($root . '/file.txt', $root . '/other.txt'),
-            ],
-            'File::move onto an existing file' => [
-                'files',
-                $file,
-                static fn(IlluminateFilesystem $files, string $root): mixed => $files->move($root . '/file.txt', $root . '/other.txt'),
             ],
             'File::hash' => [
                 'files',
@@ -166,20 +156,10 @@ class FeaturePathTest extends BaseFilesystemTestCase
                 $file,
                 static fn(FilesystemAdapter $disk): mixed => $disk->copy('file.txt', 'copy.txt'),
             ],
-            'disk move' => [
-                'disk',
-                $file,
-                static fn(FilesystemAdapter $disk): mixed => $disk->move('file.txt', 'moved.txt'),
-            ],
             'disk copy onto an existing file' => [
                 'disk',
                 $file,
                 static fn(FilesystemAdapter $disk): mixed => $disk->copy('file.txt', 'other.txt'),
-            ],
-            'disk move onto an existing file' => [
-                'disk',
-                $file,
-                static fn(FilesystemAdapter $disk): mixed => $disk->move('file.txt', 'other.txt'),
             ],
             'disk delete' => [
                 'disk',

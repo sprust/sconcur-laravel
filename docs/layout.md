@@ -18,11 +18,11 @@ src/Redis/                     — the sconcur Redis client (Connector, Connecti
                                  PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
 src/Filesystem/                — the sconcur_local disk and the File facade on the Files feature
                                  (SconcurLocalFilesystemAdapter, SconcurLocalDiskFactory, Filesystem,
-                                 FilesFeatureCall)
+                                 FilesFeatureCall, LocalPaths)
 src/Cache/Redis/               — the sconcur_redis cache store (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (a retry pause that does not freeze the worker),
                                  ProcessMemory (the resident set size of the process),
-                                 Coroutine (whether the caller runs in a coroutine)
+                                 Coroutine (whether the caller runs in a coroutine the extension drives)
 src/Tasks/                     — the periodic task pool (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — the control channel through the cache (stop/restart from another container)

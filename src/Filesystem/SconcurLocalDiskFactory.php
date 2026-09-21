@@ -17,8 +17,10 @@ use RuntimeException;
  * takes, plus `timeout_ms`.
  *
  * It mirrors FilesystemManager::createLocalDriver() and createFlysystem(), which are
- * protected, with the one difference of the adapter, and hands back the framework's
- * LocalFilesystemAdapter, so path(), url() and the rest behave as on `local`.
+ * protected, and hands back the framework's LocalFilesystemAdapter, so path(), url() and
+ * the rest behave as on `local`. Two differences besides the adapter: the disk gets no
+ * name (a custom creator is not told it) and no signed-URL serving, which `serve` — refused
+ * below — would need.
  *
  * What the disk would not honour is refused rather than ignored: `serve`, whose route the
  * framework registers for the `local` driver only, and `read-only` and `prefix`, whose

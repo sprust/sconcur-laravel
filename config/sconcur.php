@@ -59,7 +59,7 @@ return [
     */
     'listeners' => [
         WorkerWatchdogTriggered::class => [
-            // \App\Listeners\ReportWorkerWatchdog::class,
+            // App\Listeners\ReportWorkerWatchdog::class,
         ],
     ],
 

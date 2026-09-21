@@ -73,9 +73,10 @@ class FilesystemParityTest extends BaseFilesystemTestCase
         ]);
 
         // md5 rather than sha256, whose hardware instructions leave too short a native stall
-        // to tell apart from a tick; the feature's bound is absolute, a few ticks.
-        self::assertGreaterThan(60.0, $nativeStallMs, 'the measurement does not see a native hash');
-        self::assertLessThan(40.0, $featureStallMs);
+        // to tell apart from a tick. Relative rather than absolute: a loaded machine
+        // stretches both, a fast one shortens both.
+        self::assertGreaterThan(30.0, $nativeStallMs, 'the measurement does not see a native hash');
+        self::assertLessThan($nativeStallMs / 2, $featureStallMs);
     }
 
     /**
@@ -136,6 +137,20 @@ class FilesystemParityTest extends BaseFilesystemTestCase
                 // @phpstan-ignore argument.type (the parent's PHPDoc says string; PHP takes this too)
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy(new SplFileInfo($root . '/source.txt'), $root . '/copy.txt'),
             ],
+            'copy a directory onto an existing file' => [
+                static function (string $root): void {
+                    mkdir($root . '/directory');
+                    file_put_contents($root . '/target.txt', 'keep');
+                },
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy($root . '/directory', $root . '/target.txt'),
+            ],
+            'copy onto a directory' => [
+                static function (string $root): void {
+                    file_put_contents($root . '/source.txt', 'contents');
+                    mkdir($root . '/directory');
+                },
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy($root . '/source.txt', $root . '/directory'),
+            ],
             'move to a new file' => [
                 $source,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->move($root . '/source.txt', $root . '/moved.txt'),
@@ -183,6 +198,12 @@ class FilesystemParityTest extends BaseFilesystemTestCase
                 $source,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->hash($root . '/source.txt', 'xxh128'),
             ],
+            'hash of a directory' => [
+                static function (string $root): void {
+                    mkdir($root . '/directory');
+                },
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->hash($root . '/directory', 'sha256'),
+            ],
             'hash of a missing file' => [
                 $nothing,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->hash($root . '/missing.txt', 'sha256'),
@@ -204,6 +225,32 @@ class FilesystemParityTest extends BaseFilesystemTestCase
                 $sourceAndTarget,
                 static function (IlluminateFilesystem $files, string $root): mixed {
                     $files->replace($root . '/target.txt', 'new', 0640);
+
+                    return null;
+                },
+            ],
+            'replace with a setuid mode' => [
+                $nothing,
+                static function (IlluminateFilesystem $files, string $root): mixed {
+                    $files->replace($root . '/replaced.txt', 'contents', 04755);
+
+                    return null;
+                },
+            ],
+            'replace with a mode from fileperms()' => [
+                $nothing,
+                static function (IlluminateFilesystem $files, string $root): mixed {
+                    $files->replace($root . '/replaced.txt', 'contents', 0100640);
+
+                    return null;
+                },
+            ],
+            'replace with a mode as a string' => [
+                $nothing,
+                static function (IlluminateFilesystem $files, string $root): mixed {
+                    // A string is read as a decimal number: '420' is 0644.
+                    // @phpstan-ignore argument.type (the parent's PHPDoc says int; PHP takes this too)
+                    $files->replace($root . '/replaced.txt', 'contents', '420');
 
                     return null;
                 },

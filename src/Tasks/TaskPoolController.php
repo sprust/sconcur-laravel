@@ -142,6 +142,10 @@ class TaskPoolController
         }
 
         if ($command->targetsAll()) {
+            // The operator's stop outranks a restart asked for before it — a signal whose
+            // drain this arrives during — so the pool stays down as asked.
+            $this->restartWanted = false;
+
             $this->requestStop();
 
             return;

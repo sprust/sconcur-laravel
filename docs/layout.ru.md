@@ -18,11 +18,11 @@ src/Redis/                     — Redis-клиент sconcur (Connector, Connec
                                  PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
 src/Filesystem/                — диск sconcur_local и фасад File на фиче Files
                                  (SconcurLocalFilesystemAdapter, SconcurLocalDiskFactory, Filesystem,
-                                 FilesFeatureCall)
+                                 FilesFeatureCall, LocalPaths)
 src/Cache/Redis/               — кэш-стор sconcur_redis (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер),
                                  ProcessMemory (резидентная память процесса, RSS),
-                                 Coroutine (выполняется ли вызывающий код в корутине)
+                                 Coroutine (выполняется ли вызывающий код в корутине расширения)
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — канал управления через кэш (stop/restart из другого контейнера)

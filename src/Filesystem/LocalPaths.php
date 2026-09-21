@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Filesystem;
 
 /**
- * The native checks the Files feature does not make and PHP's own copy() and rename() do,
- * asked inside a coroutine before an operation goes to the feature — outside one the
- * native call runs anyway, and they would only cost it a stat.
+ * The native checks the Files feature does not make and PHP's own functions do, asked
+ * inside a coroutine before an operation goes to the feature — outside one the native
+ * call runs anyway, and they would only cost it a stat each.
  */
 class LocalPaths
 {
@@ -31,25 +31,28 @@ class LocalPaths
     }
 
     /**
-     * Whether a move of the source to the target crosses filesystems. False when it cannot
-     * be told — a missing source or target directory — and the move is left to fail where
-     * it runs.
-     *
-     * rename() does such a move as a copy through the target path — into the file an
-     * existing symlink there points at, onto an existing inode, with the source's mode and
-     * owner — and the feature as a copy to a temporary file renamed over the target. A copy
-     * either way, so there is little to gain, and it stays native.
+     * Whether the path is a regular file, through a symlink too. A directory, a FIFO, a
+     * device or a /proc entry is not, and stays with the native call: the feature opens a
+     * directory without complaint and fails only when it reads — after it has truncated
+     * the destination of a copy — and reads a /proc entry by a size the kernel reports as
+     * zero.
      */
-    public static function crossesDevices(string $source, string $target): bool
+    public static function isRegularFile(string $path): bool
     {
-        clearstatcache(true, $source);
+        clearstatcache(true, $path);
 
-        $sourceStat    = @stat($source);
-        $directoryStat = @stat(dirname($target));
+        return is_file($path);
+    }
 
-        return $sourceStat !== false
-            && $directoryStat !== false
-            && $sourceStat['dev'] !== $directoryStat['dev'];
+    /**
+     * Whether a write may go to the feature: the path holds a regular file or nothing yet.
+     * Anything else there — a directory, a device, a FIFO — is the native call's to answer.
+     */
+    public static function isRegularOrMissing(string $path): bool
+    {
+        clearstatcache(true, $path);
+
+        return !file_exists($path) || is_file($path);
     }
 
     /**

@@ -75,9 +75,10 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
         ]);
 
         // md5 rather than sha256, whose hardware instructions leave too short a native stall
-        // to tell apart from a tick; the feature's bound is absolute, a few ticks.
-        self::assertGreaterThan(60.0, $nativeStallMs, 'the measurement does not see a native hash');
-        self::assertLessThan(40.0, $featureStallMs);
+        // to tell apart from a tick. Relative rather than absolute: a loaded machine
+        // stretches both, a fast one shortens both.
+        self::assertGreaterThan(30.0, $nativeStallMs, 'the measurement does not see a native hash');
+        self::assertLessThan($nativeStallMs / 2, $featureStallMs);
     }
 
     /**
@@ -238,6 +239,27 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                     return $disk->writeStream('copy.txt', $stream);
                 },
             ],
+            'write a non-blocking stream with no more data' => [
+                $unlocked,
+                $nothing,
+                static function (FilesystemAdapter $disk): mixed {
+                    $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+
+                    assert($pair !== false);
+
+                    [$reading, $writing] = $pair;
+
+                    fwrite($writing, 'abc');
+                    stream_set_blocking($reading, false);
+
+                    $written = $disk->writeStream('socket.txt', $reading);
+
+                    fclose($writing);
+                    fclose($reading);
+
+                    return $written;
+                },
+            ],
             'write a stream onto a directory' => [
                 $unlocked,
                 $tree,
@@ -271,6 +293,21 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                 $unlocked,
                 $file,
                 static fn(FilesystemAdapter $disk): mixed => $disk->copy('file.txt', 'copies/copy.txt'),
+            ],
+            'copy a directory' => [
+                $unlocked,
+                $tree,
+                static fn(FilesystemAdapter $disk): mixed => $disk->copy('directory', 'copy'),
+            ],
+            'copy a directory onto an existing file' => [
+                $unlocked,
+                $tree,
+                static fn(FilesystemAdapter $disk): mixed => $disk->copy('directory', 'file.txt'),
+            ],
+            'copy onto a directory' => [
+                $unlocked,
+                $tree,
+                static fn(FilesystemAdapter $disk): mixed => $disk->copy('file.txt', 'directory'),
             ],
             'copy a file onto itself' => [
                 $unlocked,
@@ -387,6 +424,14 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                 },
                 static fn(FilesystemAdapter $disk): mixed => $disk->lastModified('file.txt'),
             ],
+            'last modified before 1970' => [
+                $unlocked,
+                static function (string $root): void {
+                    file_put_contents($root . '/file.txt', 'contents');
+                    exec('touch -d @-1.5 ' . escapeshellarg($root . '/file.txt'));
+                },
+                static fn(FilesystemAdapter $disk): mixed => $disk->lastModified('file.txt'),
+            ],
             'last modified of a missing file' => [
                 $unlocked,
                 $nothing,
@@ -418,6 +463,11 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                 $unlocked,
                 $file,
                 static fn(FilesystemAdapter $disk): mixed => $disk->checksum('file.txt', ['checksum_algo' => 'crc32b']),
+            ],
+            'checksum of a directory' => [
+                $unlocked,
+                $tree,
+                static fn(FilesystemAdapter $disk): mixed => $disk->checksum('directory'),
             ],
             'checksum of a missing file' => [
                 $unlocked,
