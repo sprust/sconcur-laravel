@@ -196,12 +196,17 @@ extension loaded, so the default 256 leaves roughly 190 MiB for the tasks. Where
 not available the heap decides alone. The log line names the figure that crossed the limit:
 `memory limit reached (rss 312 MiB) — stopping`.
 
-The exit code tells them apart, and that is not a detail. A stop on request exits with
-zero, an exit on `memory_mb` with `TaskPool::EXIT_RESTART` (75). The `tasks` group declares
-`restartPolicy: on-failure`, so the master brings a new process up after the second and
-leaves things alone after the first. With the master's inherited `always` any exit would
-mean a new pool within the second, and `sconcur:tasks:stop` would stop the pool exactly
-until the next tick — that is, not stop it at all.
+The exit code tells them apart, and that is not a detail. `sconcur:tasks:stop`, a signal
+to a pool running without a master and the master going away exit with zero; `memory_mb`
+and a signal under a master exit with `TaskPool::EXIT_RESTART` (75). The master's own
+stop, reload and group removal send `SIGTERM` as well, but the master reads no exit code
+of a worker it drains or rolls, so there the 75 changes nothing. Where it is read, the
+signal is the master's watchdog or an operator's `kill`, and both want the pool back. The
+`tasks` group declares `restartPolicy: on-failure`, so the master brings a new process up
+after a 75 and leaves things alone after a zero. Under a master, then, `kill` restarts the
+pool; `sconcur:tasks:stop` is what stops it. With the master's inherited `always` any exit
+would mean a new pool within the second, and `sconcur:tasks:stop` would stop the pool
+exactly until the next tick — that is, not stop it at all.
 
 The controller is a member of the group like any other, only without useful work: it wakes
 every `sleep_chunk_ms` and looks at the signal and at the control channel. This is not
@@ -301,19 +306,18 @@ connection means to the master that the worker has gone. The master marks a work
 when there has been no snapshot for longer than 15 seconds.
 
 The pool sends its snapshots from PHP, so a frozen PHP thread shows as `hung` here, unlike
-in the runtimes whose snapshots come from the extension's own thread. `hung` only marks the
-worker; what acts on a frozen thread is the master's watchdog. Every return of the PHP thread to the
-scheduler marks the worker alive, and the pool returns there all the time — the
-controller's pauses go through `Sleeper`, and preemption parks a tick that computes — so an
-idle pool is not taken for a stuck one. A tick that holds the thread in a native call —
-`usleep()`, a PDO query, `curl` — marks nothing, and past `watchdogTimeoutMs` (60 s by
-default, `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS`) the master sends the process `SIGTERM`. The
-pool takes it like any other `SIGTERM`: it waits for the running ticks and exits with zero,
-and under `restartPolicy: on-failure` the master reads a zero as a finished worker and
-brings up no replacement. The pool stays down until `sconcur:servers:master:reload`, the
-same as after `sconcur:tasks:stop`. Only a process the stop deadline had to finish off with
-`SIGKILL` is replaced. A task that legitimately blocks that long needs the threshold raised
-past it, or `0` for the `tasks` group.
+in the runtimes whose snapshots come from the extension's own thread. `hung` only marks
+the worker; what acts on a frozen thread is the master's watchdog. Every return of the PHP
+thread to the scheduler marks the worker alive, and the pool returns there all the time —
+the controller's pauses go through `Sleeper`, and with `preemption_quantum_ms` above zero
+preemption parks a tick that computes — so an idle pool is not taken for a stuck one. A
+tick that holds the thread in a native call — `usleep()`, a PDO query, `curl` — marks
+nothing, and neither does a computing tick with preemption off. Past `watchdogTimeoutMs`
+(60 s by default, `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS`) the master sends the process
+`SIGTERM`; the pool waits for the running ticks, exits with `EXIT_RESTART` as after any
+signal under a master (see [Stopping](#stopping)), and the master brings a new one up. A
+task that legitimately blocks that long needs the threshold raised past it, or `0` for the
+`tasks` group.
 
 A group the panel says nothing about — with the pool stopped, for instance — is drawn in
 with zeros by the application's dashboard so that it does not look non-existent

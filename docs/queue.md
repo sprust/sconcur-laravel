@@ -111,5 +111,16 @@ it refuses it, and that is for the application, which knows its jobs, to decide.
 `WorkerOptions::$timeout` is deliberately zero next to it: the Laravel worker's `SIGALRM`
 would kill the process along with every handler running beside it.
 
+The master's watchdog is a different thing and it is on. A job that holds the PHP thread
+in a native call — a PDO query, `curl`, `sleep()` — for longer than `watchdogTimeoutMs`
+(60 s by default, `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS`) leaves the worker unable to serve
+anything, its other handlers included, and the master replaces it: `SIGTERM`, then
+`SIGKILL` after the group's `shutdownTimeoutMs`. A message still unacknowledged when the
+worker dies is delivered again — the job that blocked included, if it had not finished by
+then, and it then blocks the next worker the same way. A job that waits through SConcur
+(`sconcur_mysql`, the feature's HTTP client, `Sleeper`) suspends its coroutine instead and
+is never taken for a hang. A job that has to block natively for that long needs the
+threshold raised past it, or `0` for the `rabbitmq` group.
+
 The pool's settings are in
 [configuration.md](configuration.md#the-rabbitmq-group-and-its-consumers).

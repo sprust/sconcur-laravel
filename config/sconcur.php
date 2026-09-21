@@ -239,8 +239,9 @@ return [
                 // Not the master's `always`: this pool is meant to be stoppable.
                 // `sconcur:tasks:stop` drains the tasks and exits 0, and under `always`
                 // the master would put a fresh pool up within the second — a stop that
-                // does not stop. The one exit that does want a new process, the memory
-                // limit, is non-zero on purpose (TaskPool::EXIT_RESTART).
+                // does not stop. The exits that do want a new process — the memory limit,
+                // and a signal while the master supervises the pool (its watchdog, an
+                // operator's kill) — are non-zero on purpose (TaskPool::EXIT_RESTART).
                 'restartPolicy' => 'on-failure',
                 // Must exceed the pool's own shutdown deadline (20 s), or the master
                 // kills it before the graceful stop can finish; and supervisor's

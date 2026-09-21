@@ -74,7 +74,9 @@ use SConcur\Laravel\Ws\WsPresenceOptions;
  *
  * Always: registers the artisan commands, the `sconcur_rabbitmq` queue connector, the
  * `sconcur_mysql` database driver, the `sconcur` Redis client, the `sconcur_redis` cache
- * store and the coroutine-scoped transactions manager. None of them depends on the process
+ * store, the `sconcur_local` disk driver, the coroutine-scoped transactions manager and
+ * the listeners of config('sconcur.listeners'). The `files` binding only under
+ * config('sconcur.filesystem.files'). None of them depends on the process
  * being a coroutine one — the features work synchronously too, so which connection an
  * application uses is its own choice, made in config/database.php and config/cache.php
  * like any other.
@@ -428,15 +430,17 @@ class SConcurServiceProvider extends ServiceProvider
         $this->callAfterResolving('filesystem', static function (FilesystemManager $filesystemManager): void {
             $filesystemManager->extend(
                 SconcurLocalFilesystemAdapter::DRIVER,
-                static fn(Container $app, array $config): LocalFilesystemAdapter => (new SconcurLocalDiskFactory())->make($config),
+                static fn(Container $app, array $config): LocalFilesystemAdapter => new SconcurLocalDiskFactory()
+                    ->make($config),
             );
         });
 
-        // The flag is read when `files` is resolved rather than here, so it is the config
-        // the application ends up with that decides, not the one it had at this point.
-        $this->app->extend('files', static function (IlluminateFilesystem $files): IlluminateFilesystem {
+        // The flag is read when `files` is resolved, so a config set after this provider
+        // registers still decides. If `files` is resolved already, extend() runs at once
+        // and the flag is read now.
+        $this->app->extend('files', static function (IlluminateFilesystem $filesystem): IlluminateFilesystem {
             if (!(bool) config('sconcur.filesystem.files', false)) {
-                return $files;
+                return $filesystem;
             }
 
             return new SconcurFilesystem(

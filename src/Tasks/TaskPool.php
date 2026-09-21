@@ -29,7 +29,8 @@ use Throwable;
 class TaskPool
 {
     /**
-     * The exit code of a stop that wants a fresh process — today only the memory limit.
+     * The exit code of a stop that wants a fresh process: the memory limit, and a signal
+     * under a master (see TaskPoolController::restartWanted()).
      *
      * It has to be non-zero, and the group's restartPolicy has to be `on-failure`, for
      * the two kinds of stop to be told apart at all: under `always` a supervised pool

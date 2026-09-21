@@ -10,6 +10,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use SConcur\Features\Sleeper\Sleeper;
 use SConcur\Laravel\Filesystem\Filesystem;
+use SplFileInfo;
 
 /**
  * The `files` binding on the Files feature answers exactly as the framework's own: every
@@ -59,7 +60,7 @@ class FilesystemParityTest extends BaseFilesystemTestCase
                 // Suspended first, so the ticker is running by the time the hash starts.
                 Sleeper::usleep(30_000);
 
-                (new IlluminateFilesystem())->hash($path, 'sha256');
+                (new IlluminateFilesystem())->hash($path, 'md5');
             },
         ]);
 
@@ -67,12 +68,14 @@ class FilesystemParityTest extends BaseFilesystemTestCase
             static function () use ($path): void {
                 Sleeper::usleep(30_000);
 
-                (new Filesystem())->hash($path, 'sha256');
+                (new Filesystem())->hash($path, 'md5');
             },
         ]);
 
-        self::assertGreaterThan(30.0, $nativeStallMs, 'the measurement does not see a native hash');
-        self::assertLessThan($nativeStallMs / 3, $featureStallMs);
+        // md5 rather than sha256, whose hardware instructions leave too short a native stall
+        // to tell apart from a tick; the feature's bound is absolute, a few ticks.
+        self::assertGreaterThan(60.0, $nativeStallMs, 'the measurement does not see a native hash');
+        self::assertLessThan(40.0, $featureStallMs);
     }
 
     /**
@@ -114,6 +117,25 @@ class FilesystemParityTest extends BaseFilesystemTestCase
                 $source,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy($root . '/source.txt', $root . '/missing/copy.txt'),
             ],
+            'copy onto itself through a symlink' => [
+                static function (string $root): void {
+                    file_put_contents($root . '/source.txt', 'contents');
+                    symlink($root . '/source.txt', $root . '/link.txt');
+                },
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy($root . '/link.txt', $root . '/source.txt'),
+            ],
+            'copy onto itself through a hard link' => [
+                static function (string $root): void {
+                    file_put_contents($root . '/source.txt', 'contents');
+                    link($root . '/source.txt', $root . '/hard.txt');
+                },
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy($root . '/source.txt', $root . '/hard.txt'),
+            ],
+            'copy with a Stringable path' => [
+                $source,
+                // @phpstan-ignore argument.type (the parent's PHPDoc says string; PHP takes this too)
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->copy(new SplFileInfo($root . '/source.txt'), $root . '/copy.txt'),
+            ],
             'move to a new file' => [
                 $source,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->move($root . '/source.txt', $root . '/moved.txt'),
@@ -132,6 +154,18 @@ class FilesystemParityTest extends BaseFilesystemTestCase
                     file_put_contents($root . '/directory/file.txt', 'contents');
                 },
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->move($root . '/directory', $root . '/renamed'),
+            ],
+            'move onto itself through a hard link' => [
+                static function (string $root): void {
+                    file_put_contents($root . '/source.txt', 'contents');
+                    link($root . '/source.txt', $root . '/hard.txt');
+                },
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->move($root . '/source.txt', $root . '/hard.txt'),
+            ],
+            'move with a Stringable path' => [
+                $source,
+                // @phpstan-ignore argument.type (the parent's PHPDoc says string; PHP takes this too)
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->move(new SplFileInfo($root . '/source.txt'), $root . '/moved.txt'),
             ],
             'hash md5 by default' => [
                 $source,
@@ -152,6 +186,11 @@ class FilesystemParityTest extends BaseFilesystemTestCase
             'hash of a missing file' => [
                 $nothing,
                 static fn(IlluminateFilesystem $files, string $root): mixed => $files->hash($root . '/missing.txt', 'sha256'),
+            ],
+            'hash with a Stringable path' => [
+                $source,
+                // @phpstan-ignore argument.type (the parent's PHPDoc says string; PHP takes this too)
+                static fn(IlluminateFilesystem $files, string $root): mixed => $files->hash(new SplFileInfo($root . '/source.txt'), 'sha256'),
             ],
             'replace a new file' => [
                 $nothing,
@@ -176,6 +215,31 @@ class FilesystemParityTest extends BaseFilesystemTestCase
                 },
                 static function (IlluminateFilesystem $files, string $root): mixed {
                     $files->replace($root . '/link.txt', 'new');
+
+                    return null;
+                },
+            ],
+            'replace with a resource' => [
+                $nothing,
+                static function (IlluminateFilesystem $files, string $root): mixed {
+                    $stream = fopen('php://memory', 'w+b');
+
+                    assert($stream !== false);
+
+                    fwrite($stream, 'from a stream');
+                    rewind($stream);
+
+                    // @phpstan-ignore argument.type (the parent's PHPDoc says string; PHP takes this too)
+                    $files->replace($root . '/replaced.txt', $stream);
+
+                    return null;
+                },
+            ],
+            'replace with an array' => [
+                $nothing,
+                static function (IlluminateFilesystem $files, string $root): mixed {
+                    // @phpstan-ignore argument.type (the parent's PHPDoc says string; PHP takes this too)
+                    $files->replace($root . '/replaced.txt', ['x', 'y']);
 
                     return null;
                 },

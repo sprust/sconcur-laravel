@@ -16,12 +16,13 @@ itself does is in the library's `vendor/sconcur/sconcur/docs/files.md`.
 - [When the feature is used](#when-the-feature-is-used)
 - [The `sconcur_local` disk](#the-sconcur_local-disk)
 - [The `File` facade](#the-file-facade)
+- [Differences from the native code](#differences-from-the-native-code)
 - [Limits](#limits)
 
 ## When the feature is used
 
-The gain is where the bytes never cross into PHP — a copy, a hash, an upload stored from
-its temporary file — and where a slow disk would otherwise hold the whole worker. On a
+The gain is where the bytes never cross into PHP — a copy, a hash — and where a slow disk
+would otherwise hold the whole worker. On a
 small file with a warm page cache the native call is faster, and a call outside a
 coroutine has nothing to yield to. So both places follow one rule:
 
@@ -29,15 +30,27 @@ coroutine has nothing to yield to. So both places follow one rule:
 - outside a coroutine (boot, artisan, the tests' own process) every call is the native one;
 - a failure on the feature hands the call to the native implementation, which answers it
   the way it always has: the `false`, the warning Laravel turns into an `ErrorException`,
-  the Flysystem exception with the native message. A failing operation is done twice; in
-  exchange no caller ever sees a `SConcur\Exceptions\Files\*` exception.
+  the Flysystem exception with the native message. A failing operation is done twice.
 
-Two failures are not handed over: `FileStoppedException` (the coroutine is being unwound)
-and `FileTimeoutException` (a deadline the application set, see `timeout_ms` below).
+Three failures are not handed over and reach the caller as they are:
+`FileStoppedException` (the coroutine is being unwound), `FileTimeoutException` (a deadline
+the application set, see `timeout_ms` below) and `InvalidFileArgumentException` (a call the
+feature refuses as malformed — a bug, not a condition of the disk).
+
+What the feature would do differently stays native. A copy or a move onto the same file —
+by path, through a symlink or a hard link — goes to the native code, which refuses the copy
+rather than truncating the file it is about to read. A move across filesystems goes there
+too: `rename()` does it as a copy through the target path, into the file a symlink there
+points at and with the source's mode, where the feature would replace the target. These
+checks cost a `stat` and are made inside a coroutine only.
 
 `tests/Feature/Filesystem/` runs every covered call through the native implementation and
 through the package's one on the same tree, inside a coroutine and outside it, and requires
 the same answer, the same exception and the same files with the same permissions.
+`StatCacheTest` checks that PHP's own stat functions see each change at once.
+`FeaturePathTest` checks the other half: that inside a coroutine the package's call makes
+none of the native file operations that do the work (open, rename, unlink, mkdir, rmdir,
+opendir) and the native call makes, so the feature did it.
 
 ## The `sconcur_local` disk
 
@@ -65,11 +78,11 @@ deadline of one call; `0` is none, as natively. The disk is the framework's
 | Operation | On the feature |
 |---|---|
 | `get`, `read` | `Files::read`, with no size limit, as `file_get_contents` has none |
-| `put`, `writeStream` | only with `'lock' => 0`, see below; a stream of a local file read from its start is copied without crossing into PHP — which is what `putFile()` of an upload does |
+| `put`, `writeStream` | only with `'lock' => 0`, see below |
 | `copy` | `Files::copy`; the visibility is kept as the `local` disk keeps it |
-| `move` | `Files::move` |
-| `delete`, `deleteDirectory` | `Files::delete`, `Files::removeDirectory` |
-| `exists`, `fileExists`, `directoryExists`, `size`, `lastModified`, `getVisibility` | one `Files::stat` |
+| `move` | `Files::move`; a move across filesystems stays native |
+| `delete`, `deleteDirectory` | `Files::delete`, `Files::removeDirectory`; a symlink stays native — the native code decides by what it points at, the feature by the link |
+| `fileExists`, `directoryExists`, `size`, `lastModified`, `getVisibility` | one `Files::stat` each; `exists` asks `fileExists` and then `directoryExists` |
 | `checksum` | `Files::hashFile` for `md5`, `sha1`, `sha256`, `sha512`; any other algorithm is native |
 
 Native on this disk too: `readStream` (its contract is a PHP resource), the listings
@@ -81,10 +94,14 @@ locks. So under the default lock `put` and `writeStream` stay native and the dis
 exactly as `local` does; `'lock' => 0` puts them on the feature, again exactly as a `local`
 disk with `'lock' => 0` writes — in place, without a lock.
 
-A `writeStream` from anything other than a local file read from its start (`php://temp`, a
-socket, a stream already read from) is written in chunks as it is read. Once it has
-started reading it cannot hand the call over — the stream cannot be read twice — so a
-failure there is an `UnableToWriteFile` of its own.
+`writeStream` reads the stream in chunks and hands each to a writer of the feature, so a
+stream filter applies as it does natively and the stream is left at its end. The bytes are
+read rather than copied from the file behind the stream, because nothing in a stream's
+metadata says a filter is attached. Opening the writer can still fail over to the native
+code; once reading has started it cannot — the stream cannot be read twice. A stream that
+fails to read ends as natively: what was read stays written, and the call raises
+`UnableToWriteFile`. A failure of the feature there raises `UnableToWriteFile` with the
+feature's message.
 
 Refused when the disk is built, with a `RuntimeException`, rather than ignored:
 
@@ -108,11 +125,12 @@ own, and only these calls change:
 | Method | On the feature |
 |---|---|
 | `File::copy` | `Files::copy` |
-| `File::move` | `Files::move` |
+| `File::move` | `Files::move`; a move across filesystems stays native |
 | `File::hash` | `Files::hashFile` for `md5`, `sha1`, `sha256`, `sha512`; any other algorithm is native |
-| `File::replace` | `Files::writeAtomic`, with the permissions the native method gives |
+| `File::replace` | `Files::writeAtomic`, with the permissions the native method gives; contents other than a string (a resource, an array) stay native |
 
-A path with a stream wrapper (`s3://`, `phar://`) and a copy onto the same file stay native.
+A path may be a Stringable object (`SplFileInfo`, `UploadedFile`), as natively. A path with
+a stream wrapper (`s3://`, `phar://`) stays native.
 
 Native on purpose: the metadata calls (`exists`, `isFile`, `lastModified`, `size`), which
 the framework makes on every request and a boundary crossing would only slow down;
@@ -123,6 +141,28 @@ hashes with `xxh128`, an algorithm the feature does not have.
 
 Code that builds `new Filesystem()` itself rather than resolving `files` gets the
 framework's class, as before.
+
+## Differences from the native code
+
+What stays different, and why:
+
+- PHP's stat cache. PHP answers `file_exists()`, `is_file()`, `filesize()` and the rest from
+  the last `stat()` it made, and the feature changes the disk past PHP. So after every
+  change on the feature the cache is cleared (`clearstatcache(true)`) — also after a write
+  or a copy, where the native call leaves it as it was, so the package never answers from a
+  stale entry where the native code would.
+- An operation can be cut short. A native call runs to its end; one on the feature ends
+  with `FileStoppedException` when its coroutine is unwound (`WaitGroup::stop()`, a worker
+  stopping), and with `FileTimeoutException` past a `timeout_ms` above zero.
+- A failure is repeated natively from where the feature left the disk. The error the caller
+  gets is the native one, but the first attempt may have done part of the work — a
+  `deleteDirectory` that removed some entries before it failed — so what is left can
+  differ from a run that was native throughout.
+- The same-file check and the operation are two steps. A path swapped for a link to the
+  source between them would have the copy truncate the source; closing that window needs
+  the library to compare the open files.
+- `File::replace` flushes the new file to the disk before renaming it (`writeAtomic`), which
+  the native method does not: the same result, more durable and slower.
 
 ## Limits
 

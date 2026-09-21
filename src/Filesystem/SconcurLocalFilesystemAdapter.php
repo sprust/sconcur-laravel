@@ -18,8 +18,8 @@ use SConcur\Exceptions\Files\FileTimeoutException;
 use SConcur\Features\Files\Dto\FileStat;
 use SConcur\Features\Files\FileHashAlgorithm;
 use SConcur\Features\Files\Files;
+use SConcur\Features\Files\FileWriter;
 use SConcur\Features\Files\FileWriteMode;
-use SConcur\Laravel\Support\Coroutine;
 
 /**
  * The adapter of the `sconcur_local` disk: Flysystem's local adapter with the operations
@@ -27,9 +27,11 @@ use SConcur\Laravel\Support\Coroutine;
  * coroutine every method is the parent's, so the disk is the `local` disk there.
  *
  * On the feature: read, copy, move, delete, deleteDirectory, the metadata calls (one stat
- * instead of a syscall per question), checksum for md5/sha1/sha256/sha512, and write and
- * writeStream when the disk takes no lock (`'lock' => 0`) — the feature has no flock, and
- * a write under LOCK_EX stays the parent's so the disk answers what `local` answers.
+ * each), checksum for md5/sha1/sha256/sha512, and write and writeStream when the disk takes
+ * no lock (`'lock' => 0`) — the feature has no flock, and a write under LOCK_EX stays the
+ * parent's so the disk answers what `local` answers. A copy or move onto the same file
+ * (by path, symlink or hard link), a move across filesystems and a delete of a symlink
+ * stay the parent's too; those checks are made inside the coroutine only.
  *
  * The parent's: readStream (its contract is a PHP resource), listContents (a feature
  * listing carries no permissions, and every entry needs its visibility), createDirectory,
@@ -96,6 +98,8 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
                     timeoutMs: $this->timeoutMs,
                 );
 
+                LocalPaths::forgetStats();
+
                 $this->applyVisibility(path: $path, config: $config);
             },
             native: function () use ($path, $contents, $config): void {
@@ -106,51 +110,55 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
 
     public function writeStream(string $path, $contents, Config $config): void
     {
-        if ($this->lockFlags !== 0 || !Coroutine::isActive()) {
+        if ($this->lockFlags !== 0) {
             parent::writeStream($path, $contents, $config);
 
             return;
         }
 
-        $sourceLocation = $this->plainFileAtStart($contents);
-
-        if ($sourceLocation !== null) {
-            // An uploaded file, a file opened by the application: its bytes never have to
-            // cross into PHP at all. Nothing has been read yet, so a failure is still the
-            // parent's to answer.
-            FilesFeatureCall::run(
-                feature: function () use ($path, $sourceLocation, $config): void {
-                    Files::copy(
-                        source: $sourceLocation,
-                        destination: $this->prepareWrite(path: $path, config: $config),
-                        mode: FileWriteMode::Replace,
-                        permissions: 0666,
-                        timeoutMs: $this->timeoutMs,
-                    );
-
-                    $this->applyVisibility(path: $path, config: $config);
-                },
-                native: function () use ($path, $contents, $config): void {
-                    parent::writeStream($path, $contents, $config);
-                },
-            );
-
-            return;
-        }
-
-        try {
-            $fileWriter = Files::openWriter(
+        // Opened through the fallback: until the first chunk is read the stream is
+        // untouched, so a failure to open is still the parent's to answer. Null when the
+        // parent has written the file.
+        $fileWriter = FilesFeatureCall::run(
+            feature: fn(): FileWriter => Files::openWriter(
                 path: $this->prepareWrite(path: $path, config: $config),
                 mode: FileWriteMode::Replace,
                 permissions: 0666,
                 timeoutMs: $this->timeoutMs,
-            );
+            ),
+            native: function () use ($path, $contents, $config): ?FileWriter {
+                parent::writeStream($path, $contents, $config);
 
+                return null;
+            },
+        );
+
+        if ($fileWriter === null) {
+            return;
+        }
+
+        // Read here rather than copied from the file behind the stream: a stream filter
+        // changes the bytes on their way out, and nothing in the stream's metadata says
+        // one is attached. Read to its end, as file_put_contents() leaves it.
+        error_clear_last();
+
+        try {
             while (!feof($contents)) {
-                $chunk = fread($contents, self::STREAM_CHUNK_BYTES);
+                // Silenced like the parent's @file_put_contents(), so a read failure is the
+                // UnableToWriteFile it raises rather than a notice turned into an exception.
+                $chunk = @fread($contents, self::STREAM_CHUNK_BYTES);
 
                 if ($chunk === false) {
-                    throw UnableToWriteFile::atLocation($path, 'Could not read from the source stream.');
+                    // What was read so far stays written and the file is closed, as
+                    // file_put_contents() leaves it; closing also lets the session go now
+                    // rather than when the coroutine ends.
+                    $readError = error_get_last()['message'] ?? '';
+
+                    $fileWriter->close();
+
+                    LocalPaths::forgetStats();
+
+                    throw UnableToWriteFile::atLocation($path, $readError);
                 }
 
                 if ($chunk !== '') {
@@ -159,9 +167,13 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
             }
 
             $fileWriter->close();
+
+            LocalPaths::forgetStats();
         } catch (FileStoppedException|FileTimeoutException $exception) {
             throw $exception;
         } catch (FilesException $exception) {
+            // The stream has been read from and cannot be read again, so this failure is
+            // not the parent's to repeat.
             throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
         }
 
@@ -194,6 +206,13 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
 
         FilesFeatureCall::run(
             feature: function () use ($source, $destination, $destinationLocation, $sourceLocation, $config): void {
+                // The same file under another name — a symlink, a hard link — as well.
+                if (LocalPaths::isSameFile(first: $sourceLocation, second: $destinationLocation)) {
+                    parent::copy($source, $destination, $config);
+
+                    return;
+                }
+
                 $this->ensureDirectoryExists(
                     dirname($destinationLocation),
                     $this->directoryPermissions($config->get(Config::OPTION_DIRECTORY_VISIBILITY)),
@@ -206,6 +225,8 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
                     permissions: 0666,
                     timeoutMs: $this->timeoutMs,
                 );
+
+                LocalPaths::forgetStats();
 
                 // The parent's rule: an explicit visibility, else the source's unless
                 // retain_visibility is off.
@@ -230,6 +251,7 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
     {
         FilesFeatureCall::run(
             feature: function () use ($source, $destination, $config): void {
+                $sourceLocation      = $this->pathPrefixer->prefixPath($source);
                 $destinationLocation = $this->pathPrefixer->prefixPath($destination);
 
                 $this->ensureDirectoryExists(
@@ -237,11 +259,25 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
                     $this->directoryPermissions($config->get(Config::OPTION_DIRECTORY_VISIBILITY)),
                 );
 
+                // One file under two names, or a move across filesystems — see LocalPaths.
+                // Asked once the target directory exists, so its device can be read.
+                if (
+                    $sourceLocation === $destinationLocation
+                    || LocalPaths::isSameFile(first: $sourceLocation, second: $destinationLocation)
+                    || LocalPaths::crossesDevices(source: $sourceLocation, target: $destinationLocation)
+                ) {
+                    parent::move($source, $destination, $config);
+
+                    return;
+                }
+
                 Files::move(
-                    source: $this->pathPrefixer->prefixPath($source),
+                    source: $sourceLocation,
                     destination: $destinationLocation,
                     timeoutMs: $this->timeoutMs,
                 );
+
+                LocalPaths::forgetStats();
 
                 $this->applyVisibility(path: $destination, config: $config);
             },
@@ -255,11 +291,23 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
     {
         FilesFeatureCall::run(
             feature: function () use ($path): void {
+                $location = $this->pathPrefixer->prefixPath($path);
+
+                // The parent decides on a symlink by what it points at — a dangling one it
+                // leaves in place — and the feature by the link itself.
+                if (is_link($location)) {
+                    parent::delete($path);
+
+                    return;
+                }
+
                 Files::delete(
-                    path: $this->pathPrefixer->prefixPath($path),
+                    path: $location,
                     missingOk: true,
                     timeoutMs: $this->timeoutMs,
                 );
+
+                LocalPaths::forgetStats();
             },
             native: function () use ($path): void {
                 parent::delete($path);
@@ -271,12 +319,24 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
     {
         FilesFeatureCall::run(
             feature: function () use ($prefix): void {
+                $location = $this->pathPrefixer->prefixPath($prefix);
+
+                // A symlink to a directory: the parent empties the target and then fails on
+                // the link, the feature removes the link alone. The disk answers as `local`.
+                if (is_link(rtrim($location, '/'))) {
+                    parent::deleteDirectory($prefix);
+
+                    return;
+                }
+
                 Files::removeDirectory(
-                    path: $this->pathPrefixer->prefixPath($prefix),
+                    path: $location,
                     recursive: true,
                     missingOk: true,
                     timeoutMs: $this->timeoutMs,
                 );
+
+                LocalPaths::forgetStats();
             },
             native: function () use ($prefix): void {
                 parent::deleteDirectory($prefix);
@@ -407,24 +467,5 @@ class SconcurLocalFilesystemAdapter extends LocalFilesystemAdapter
         return $visibility === null
             ? $this->visibilityConverter->defaultForDirectories()
             : $this->visibilityConverter->forDirectory((string) $visibility);
-    }
-
-    /**
-     * The path of a local file the stream reads from its very start, or null when it is
-     * anything else — a socket, php://temp, a stream somebody has already read from.
-     *
-     * @param resource $contents
-     */
-    protected function plainFileAtStart(mixed $contents): ?string
-    {
-        $metadata = stream_get_meta_data($contents);
-
-        if ($metadata['wrapper_type'] !== 'plainfile' || !$metadata['seekable'] || ftell($contents) !== 0) {
-            return null;
-        }
-
-        $uri = $metadata['uri'] ?? '';
-
-        return is_file($uri) ? $uri : null;
     }
 }

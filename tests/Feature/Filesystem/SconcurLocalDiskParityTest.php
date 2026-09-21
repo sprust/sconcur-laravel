@@ -38,7 +38,10 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
 
             $sconcur = $this->outcome(
                 arrange: $arrange,
-                act: fn(): mixed => $act($this->disk(driver: SconcurLocalFilesystemAdapter::DRIVER, config: $config), $this->root),
+                act: fn(): mixed => $act(
+                    $this->disk(driver: SconcurLocalFilesystemAdapter::DRIVER, config: $config),
+                    $this->root,
+                ),
                 inCoroutine: $inCoroutine,
             );
 
@@ -59,7 +62,7 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                 // Suspended first, so the ticker is running by the time the hash starts.
                 Sleeper::usleep(30_000);
 
-                $local->checksum('large.bin', ['checksum_algo' => 'sha256']);
+                $local->checksum('large.bin', ['checksum_algo' => 'md5']);
             },
         ]);
 
@@ -67,12 +70,14 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
             static function () use ($sconcur): void {
                 Sleeper::usleep(30_000);
 
-                $sconcur->checksum('large.bin', ['checksum_algo' => 'sha256']);
+                $sconcur->checksum('large.bin', ['checksum_algo' => 'md5']);
             },
         ]);
 
-        self::assertGreaterThan(30.0, $nativeStallMs, 'the measurement does not see a native hash');
-        self::assertLessThan($nativeStallMs / 3, $featureStallMs);
+        // md5 rather than sha256, whose hardware instructions leave too short a native stall
+        // to tell apart from a tick; the feature's bound is absolute, a few ticks.
+        self::assertGreaterThan(60.0, $nativeStallMs, 'the measurement does not see a native hash');
+        self::assertLessThan(40.0, $featureStallMs);
     }
 
     /**
@@ -102,7 +107,11 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
     }
 
     /**
-     * @return array<string, array{array<string, mixed>, Closure(string): void, Closure(FilesystemAdapter, string): mixed}>
+     * @return array<string, array{
+     *     array<string, mixed>,
+     *     Closure(string): void,
+     *     Closure(FilesystemAdapter, string): mixed,
+     * }>
      */
     public static function cases(): array
     {
@@ -121,6 +130,16 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
             file_put_contents($root . '/directory/file.txt', 'contents');
             file_put_contents($root . '/directory/nested/file.txt', 'contents');
             file_put_contents($root . '/file.txt', 'contents');
+        };
+
+        $links = static function (string $root): void {
+            mkdir($root . '/directory');
+            file_put_contents($root . '/directory/file.txt', 'contents');
+            file_put_contents($root . '/file.txt', 'contents');
+            symlink($root . '/file.txt', $root . '/link.txt');
+            symlink($root . '/missing.txt', $root . '/dangling.txt');
+            symlink($root . '/directory', $root . '/linked-directory');
+            link($root . '/file.txt', $root . '/hard.txt');
         };
 
         return [
@@ -165,7 +184,7 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                     return $disk->writeStream('streamed/copy.txt', $stream);
                 },
             ],
-            'write a stream read part of the way' => [
+            'write a stream the caller has read from, which Flysystem rewinds' => [
                 $unlocked,
                 $file,
                 static function (FilesystemAdapter $disk, string $root): mixed {
@@ -190,6 +209,47 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                     rewind($stream);
 
                     return $disk->writeStream('memory.txt', $stream, ['visibility' => 'public']);
+                },
+            ],
+            'write a filtered stream' => [
+                $unlocked,
+                $file,
+                static function (FilesystemAdapter $disk, string $root): mixed {
+                    $stream = fopen($root . '/file.txt', 'rb');
+
+                    assert($stream !== false);
+
+                    stream_filter_append($stream, 'string.toupper');
+
+                    return [
+                        $disk->writeStream('upper.txt', $stream),
+                        ftell($stream),
+                    ];
+                },
+            ],
+            'write a stream that cannot be read' => [
+                $unlocked,
+                $file,
+                static function (FilesystemAdapter $disk, string $root): mixed {
+                    $stream = fopen($root . '/sink.txt', 'wb');
+
+                    assert($stream !== false);
+
+                    return $disk->writeStream('copy.txt', $stream);
+                },
+            ],
+            'write a stream onto a directory' => [
+                $unlocked,
+                $tree,
+                static function (FilesystemAdapter $disk): mixed {
+                    $stream = fopen('php://temp', 'w+b');
+
+                    assert($stream !== false);
+
+                    fwrite($stream, 'contents');
+                    rewind($stream);
+
+                    return $disk->writeStream('directory', $stream);
                 },
             ],
             'get a file' => [
@@ -222,6 +282,21 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                 $nothing,
                 static fn(FilesystemAdapter $disk): mixed => $disk->copy('missing.txt', 'copy.txt'),
             ],
+            'copy onto itself through a symlink' => [
+                $unlocked,
+                $links,
+                static fn(FilesystemAdapter $disk): mixed => $disk->copy('link.txt', 'file.txt'),
+            ],
+            'copy onto itself through a hard link' => [
+                $unlocked,
+                $links,
+                static fn(FilesystemAdapter $disk): mixed => $disk->copy('file.txt', 'hard.txt'),
+            ],
+            'move onto itself through a hard link' => [
+                $unlocked,
+                $links,
+                static fn(FilesystemAdapter $disk): mixed => $disk->move('file.txt', 'hard.txt'),
+            ],
             'move a file' => [
                 $unlocked,
                 $file,
@@ -246,6 +321,21 @@ class SconcurLocalDiskParityTest extends BaseFilesystemTestCase
                 $unlocked,
                 $tree,
                 static fn(FilesystemAdapter $disk): mixed => $disk->delete('directory'),
+            ],
+            'delete a symlink' => [
+                $unlocked,
+                $links,
+                static fn(FilesystemAdapter $disk): mixed => $disk->delete('link.txt'),
+            ],
+            'delete a dangling symlink' => [
+                $unlocked,
+                $links,
+                static fn(FilesystemAdapter $disk): mixed => $disk->delete('dangling.txt'),
+            ],
+            'delete a symlinked directory' => [
+                $unlocked,
+                $links,
+                static fn(FilesystemAdapter $disk): mixed => $disk->deleteDirectory('linked-directory'),
             ],
             'delete a directory' => [
                 $unlocked,

@@ -140,7 +140,8 @@ src/Cache/Redis/                — Store, Lock (cooperative block()), StoreFact
 src/Filesystem/                 — SconcurLocalFilesystemAdapter + SconcurLocalDiskFactory (the
                                   sconcur_local disk), Filesystem (the `files` binding behind
                                   sconcur.filesystem.files), FilesFeatureCall (feature in a
-                                  coroutine, native outside it and on a failure)
+                                  coroutine, native outside it and on a failure), LocalPaths
+                                  (the native checks made before the feature)
 src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
 src/Support/Coroutine           — whether the caller runs in a coroutine
 src/Support/ProcessMemory       — the resident set size of the process, for memory limits
@@ -231,13 +232,20 @@ Points worth knowing before changing anything:
 - **The Files feature under Laravel's filesystem answers like the native code, failures
   included.** `FilesFeatureCall` runs the feature only inside a coroutine, and a
   `FilesException` hands the call to the parent, which fails the way callers have always
-  seen — so no `SConcur\Exceptions\Files\*` reaches them. `FileStoppedException` and
-  `FileTimeoutException` are not handed over. The `files` binding is replaced only under
-  `sconcur.filesystem.files`: the framework resolves it on every request, and its metadata
-  calls stay native. The disk writes on the feature only with `'lock' => 0` — the feature
-  has no `flock`. `FilesystemParityTest` and `SconcurLocalDiskParityTest` require the same
-  answer, exception and files as the native implementation; to extend coverage, add a case
-  there first.
+  seen. `FileStoppedException`, `FileTimeoutException` and `InvalidFileArgumentException`
+  are not handed over. What the feature would do differently stays native, decided inside
+  the coroutine only (a `stat` each): a copy or move onto the same file (path, symlink, hard
+  link — `LocalPaths::isSameFile()`), a move across filesystems (`crossesDevices()`), a
+  symlink to delete. Every change on the feature ends with `LocalPaths::forgetStats()`:
+  PHP's stat cache does not see the feature, and `StatCacheTest` catches a stale answer.
+  The `files` binding is replaced only
+  under `sconcur.filesystem.files`: the framework resolves it on every request, and its
+  metadata calls stay native. The disk writes on the feature only with `'lock' => 0` — the
+  feature has no `flock`. `FilesystemParityTest` and `SconcurLocalDiskParityTest` require
+  the same answer, exception and files as the native implementation, and a fallback would
+  pass them; `FeaturePathTest` proves the feature did the work, with a `file://` wrapper
+  (`NativeFileCallSpy`) that records native file operations. A new override needs a case in
+  both.
 - **`Redis::` on the sconcur client must answer like `PhpRedisConnection`.** The facade is a
   thin layer: past Laravel's ~25 overrides a call goes to phpredis's own method, so the
   contract applications rely on is phpredis's signatures and reply shapes (status → `true`,

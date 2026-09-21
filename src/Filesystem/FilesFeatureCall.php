@@ -23,7 +23,9 @@ use SConcur\Laravel\Support\Coroutine;
  * for by every caller.
  *
  * Two failures are not handed over: a stop (the coroutine is being unwound, and a native
- * retry would hold it) and a deadline the application set on purpose.
+ * retry would hold it) and a deadline the application set on purpose. Nor is
+ * InvalidFileArgumentException, which is a LogicException rather than a FilesException: a
+ * call the feature refuses as malformed is a bug here, not a condition of the disk.
  */
 class FilesFeatureCall
 {

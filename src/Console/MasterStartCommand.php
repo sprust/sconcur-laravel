@@ -23,8 +23,14 @@ class MasterStartCommand extends AbstractSconcurCommand
 
     public function handle(WatchdogEventForwarder $watchdogEventForwarder): int
     {
+        return $this->masterRunner($watchdogEventForwarder)->start($this->masterConfig());
+    }
+
+    /** The supervisor, with the watchdog's reports handed to the forwarder. */
+    protected function masterRunner(WatchdogEventForwarder $watchdogEventForwarder): MasterRunner
+    {
         return new MasterRunner(
             onWatchdogEvent: $watchdogEventForwarder(...),
-        )->start($this->masterConfig());
+        );
     }
 }

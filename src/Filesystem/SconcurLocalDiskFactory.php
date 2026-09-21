@@ -49,14 +49,14 @@ class SconcurLocalDiskFactory
             }
         }
 
-        $visibility = PortableVisibilityConverter::fromArray(
+        $portableVisibilityConverter = PortableVisibilityConverter::fromArray(
             (array) ($config['permissions'] ?? []),
             (string) ($config['directory_visibility'] ?? $config['visibility'] ?? Visibility::PRIVATE),
         );
 
-        $adapter = new SconcurLocalFilesystemAdapter(
+        $sconcurLocalFilesystemAdapter = new SconcurLocalFilesystemAdapter(
             location: (string) $config['root'],
-            visibility: $visibility,
+            visibility: $portableVisibilityConverter,
             lockFlags: (int) ($config['lock'] ?? LOCK_EX),
             linkHandling: ($config['links'] ?? null) === 'skip'
                 ? SconcurLocalFilesystemAdapter::SKIP_LINKS
@@ -65,8 +65,8 @@ class SconcurLocalDiskFactory
         );
 
         return new IlluminateLocalFilesystemAdapter(
-            $this->flysystem(adapter: $adapter, config: $config),
-            $adapter,
+            $this->flysystem(adapter: $sconcurLocalFilesystemAdapter, config: $config),
+            $sconcurLocalFilesystemAdapter,
             $config,
         );
     }
