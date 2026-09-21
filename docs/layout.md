@@ -26,7 +26,9 @@ src/Support/                   — CooperativeSleep (a retry pause that does not
 src/Tasks/                     — the periodic task pool (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — the control channel through the cache (stop/restart from another container)
-src/Http/                      — HttpServerRunner + LaravelHttpHandler (build + serve)
+src/Http/                      — HttpServerRunner + LaravelHttpHandler (build + serve),
+                                 StreamedChunks + IterableResponseBody (a StreamedResponse built from
+                                 chunks, streamed)
 src/Ws/                        — the WebSocket pool (WsServerRunner, ConnectionHandler,
                                  ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
 src/Foundation/                — AsyncApplication (it binds the dispatcher and the router itself,

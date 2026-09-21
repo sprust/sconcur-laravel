@@ -118,7 +118,9 @@ src/Events/AsyncDispatcher      — defer() per coroutine
 src/Routing/AsyncRouter         — current route and request per coroutine
 src/Translation/AsyncTranslator — locale per coroutine
 src/View/AsyncViewFactory       — View::share per coroutine
-src/Http/                       — HttpServerRunner + LaravelHttpHandler
+src/Http/                       — HttpServerRunner + LaravelHttpHandler; StreamedChunks +
+                                  IterableResponseBody (a StreamedResponse built from chunks,
+                                  read chunk by chunk in the request coroutine)
 src/Servers/MasterRunner        — wrapper over SConcur\Worker\MasterCli
 src/Servers/WatchdogEventForwarder — the master's watchdog reports as the
                                   WorkerWatchdogTriggered event (listeners in
@@ -269,6 +271,27 @@ Points worth knowing before changing anything:
 - **How an array argument is spread depends on the command** (`CommandArguments`): PHP
   stores `['0' => 'a']` as a list, so the shape cannot decide. Pair commands spread
   key/value, the phpredis signatures read their option arrays, the rest refuse a map.
+- **Only a StreamedResponse built from chunks is streamed.** `Http\StreamedChunks` recognises
+  Symfony's `StreamedResponse($iterable)` (the closure's `$chunks`), Laravel's
+  `response()->stream()` over a generator function (the closure's `$callback`) and a
+  generator callback; those go to `IterableResponseBody`, which advances the generator in the
+  request coroutine — a generator runs on the stack of whoever advances it, so no fiber, no
+  output buffer, a chunk per `yield`, and `Kernel::terminate()` after the last one. The
+  closure variables are Symfony's and Laravel's internals: when they change, the shape is no
+  longer recognised and the response is sent whole — it does not break. A callback that
+  prints is sent whole by `PsrHttpFactory`, converted before `terminate()`. Streaming it was
+  built once (the callback on a fiber registered in `State`, its waits passed on by the
+  request coroutine) and dropped by a maintainer decision: it leaned on the library's
+  internals and could not wait on a `WaitGroup`. Suspending from inside an `ob_start` handler
+  is not an option at all: PHP keeps its "handler running" flag up, and every other
+  coroutine's `ob_start()` becomes fatal (under preemption, a segfault).
+- **Output buffers are process-wide, and coroutines mix them.** A coroutine suspended with
+  a buffer open — a wait inside a Blade render, or preemption during a render longer than
+  the quantum — leaves it to its neighbours, and their `ob_get_clean()` take each other's
+  output (measured on the live pool: 39 of 40 concurrent responses of a 6 ms template
+  mixed). Not fixed here: it needs the scheduler to save and restore a coroutine's buffers
+  on every suspension, which is library work. `docs/http.md` (Output buffers) says what
+  keeps a response out of it.
 - **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
   the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;
   sqlx hardcodes that capability in its handshake, keeps `MySqlQueryResult` to two

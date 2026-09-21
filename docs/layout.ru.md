@@ -26,7 +26,9 @@ src/Support/                   — CooperativeSleep (пауза между по�
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — канал управления через кэш (stop/restart из другого контейнера)
-src/Http/                      — HttpServerRunner + LaravelHttpHandler (build + serve)
+src/Http/                      — HttpServerRunner + LaravelHttpHandler (сборка + serve),
+                                 StreamedChunks + IterableResponseBody (StreamedResponse из кусков,
+                                 стримится)
 src/Ws/                        — WebSocket-пул (WsServerRunner, ConnectionHandler,
                                  ConnectionRegistry, Protocol, Auth, Bus, Presence, Broadcasting)
 src/Foundation/                — AsyncApplication (сам биндит диспетчер и роутер, до появления

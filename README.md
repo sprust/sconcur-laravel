@@ -36,6 +36,7 @@ TrueAsync context). The worker's PSR-7 bridge follows Laravel Octane's model.
 | [Installation](docs/installation.md) | requirements, the extension, the config, `bootstrap/app.php`, the first run |
 | [Layout](docs/layout.md) | what lies where in the repository |
 | [Configuration (ENV)](docs/configuration.md) | every environment variable and its default |
+| [HTTP responses](docs/http.md) | how a response reaches the server, streamed responses sent chunked, output buffers in coroutines |
 | [Database](docs/database.md) | the `sconcur_mysql` connection, per-coroutine transactions, and the PDO connection's limit |
 | [Redis](docs/redis.md) | the `sconcur` Redis client, the `sconcur_redis` cache store, and what they refuse |
 | [Filesystem](docs/filesystem.md) | the `sconcur_local` disk and the `File` facade on the Files feature |
@@ -54,7 +55,7 @@ Four of them, all groups of one supervisor process, the SConcur master
 
 | Runtime | Foreground command | Document |
 |---|---|---|
-| HTTP server | `sconcur:servers:http:start` | [Installation](docs/installation.md) |
+| HTTP server | `sconcur:servers:http:start` | [Installation](docs/installation.md), [HTTP responses](docs/http.md) |
 | Queue consumers | `sconcur:servers:rabbitmq:start` | [Queue](docs/queue.md) |
 | WebSocket | `sconcur:servers:ws:start` | [WebSocket](docs/websocket.md) |
 | Periodic tasks | `sconcur:tasks:start` | [The task pool](docs/task-pool.md) |

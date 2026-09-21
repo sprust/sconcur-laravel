@@ -36,6 +36,7 @@ Coroutine-scoped модель (`AsyncApplication` плюс состояние н
 | [Установка](docs/installation.ru.md) | требования, расширение, конфиг, `bootstrap/app.php`, первый запуск |
 | [Структура](docs/layout.ru.md) | что где лежит в репозитории |
 | [Конфигурация (ENV)](docs/configuration.ru.md) | все переменные окружения и их дефолты |
+| [HTTP-ответы](docs/http.ru.md) | как ответ попадает на сервер, потоковые ответы chunked-ом, буферы вывода в корутинах |
 | [База данных](docs/database.ru.md) | соединение `sconcur_mysql`, транзакции на корутину и ограничение PDO-соединения |
 | [Redis](docs/redis.ru.md) | Redis-клиент `sconcur`, кэш-стор `sconcur_redis` и то, от чего они отказываются |
 | [Файловая система](docs/filesystem.ru.md) | диск `sconcur_local` и фасад `File` на фиче Files |
@@ -54,7 +55,7 @@ Coroutine-scoped модель (`AsyncApplication` плюс состояние н
 
 | Среда | Команда в foreground | Документ |
 |---|---|---|
-| HTTP-сервер | `sconcur:servers:http:start` | [Установка](docs/installation.ru.md) |
+| HTTP-сервер | `sconcur:servers:http:start` | [Установка](docs/installation.ru.md), [HTTP-ответы](docs/http.ru.md) |
 | Консьюмеры очереди | `sconcur:servers:rabbitmq:start` | [Очередь](docs/queue.ru.md) |
 | WebSocket | `sconcur:servers:ws:start` | [WebSocket](docs/websocket.ru.md) |
 | Периодические задачи | `sconcur:tasks:start` | [Пул задач](docs/task-pool.ru.md) |
