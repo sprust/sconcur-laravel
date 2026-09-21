@@ -147,7 +147,10 @@ return [
     'tasks' => [
         'control_key' => 'sconcur:tasks:control',
         'lock_path'   => storage_path('sconcur/runtime/tasks.lock'),
-        'memory_mb'   => 128,
+        // The pool a test runs lives in the PHPUnit process, whose resident set grows with
+        // the suite, so a limit near it stops the pool before its first tick. Well above the
+        // suite, and below the 1024 MiB TaskPoolMemoryLimitTest fakes.
+        'memory_mb'   => 512,
 
         'sleep_chunk_ms'        => 10,
         'preemption_quantum_ms' => 0,

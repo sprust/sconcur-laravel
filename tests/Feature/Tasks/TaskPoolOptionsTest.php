@@ -16,7 +16,7 @@ class TaskPoolOptionsTest extends BaseTestCase
         $options = $this->getApp()->make(TaskPoolOptions::class);
 
         self::assertSame('sconcur:tasks:control', $options->controlKey);
-        self::assertSame(128, $options->memoryMb);
+        self::assertSame(512, $options->memoryMb);
         self::assertSame(5, $options->shutdownTimeoutSeconds);
         self::assertFalse($options->reportTicks);
     }
