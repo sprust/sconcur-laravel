@@ -19,6 +19,7 @@
 - [Протокол WebSocket](#протокол-websocket)
 - [Пул задач](#пул-задач)
 - [Redis](#redis)
+- [Слушатели](#слушатели)
 
 ## Общие
 
@@ -43,6 +44,7 @@
 | `SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS` | `10000` | таймаут graceful-остановки воркера, мс |
 | `SCONCUR_HTTP_RESTART_BACKOFF_MS` | `200` | стартовый backoff рестарта, мс |
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | макс. backoff рестарта, мс |
+| `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS` | `60000` | сколько PHP-поток воркера может не возвращаться в планировщик, прежде чем мастер убьёт и заменит воркер; `0` — выкл, иначе не меньше `5000` |
 
 Не из ENV: `workerScript=base_path('artisan')`, `phpArgs=[]`,
 `runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
@@ -205,3 +207,62 @@
 Своих переменных окружения у клиента `sconcur` и кэш-стора `sconcur_redis` нет. Их
 настройки — ключи секции `redis` в `config/database.php` и `cache.stores.sconcur_redis`, а
 приложение заполняет их из любых переменных; ключи перечислены в [redis.ru.md](redis.ru.md).
+
+## Слушатели
+
+Секция `sconcur.listeners` сопоставляет класс события со списком его слушателей — в том же
+виде, что принимает `EventServiceProvider::$listen`. Сервис-провайдер регистрирует их в
+каждом процессе.
+
+```php
+use App\Listeners\ReportWorkerWatchdog;
+use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+
+'listeners' => [
+    WorkerWatchdogTriggered::class => [
+        ReportWorkerWatchdog::class,
+    ],
+],
+```
+
+| Событие | Где возникает | Когда |
+|---|---|---|
+| `SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered` | процесс мастера | watchdog мастера действует на воркер, чей PHP-поток перестал возвращаться в планировщик |
+
+`WorkerWatchdogTriggered::$watchdogEvent` — это `SConcur\Worker\WatchdogEvent` библиотеки:
+`event`, `group`, `slot`, `pid`, `ageSeconds` и `watchdogTimeoutMs`. Одно убийство даёт до
+трёх событий, по одному на `event`: `HeartbeatLost`, когда воркеру отправлен `SIGTERM`,
+`KillEscalated`, когда он не вышел и ему отправлен `SIGKILL`, `KillSurvived`, когда процесс
+пережил `SIGKILL` и его слот остаётся пустым. `ageSeconds` заполнен только у первого.
+Событие поднимает `sconcur:servers:master:start`; без слушателей мастер только пишет журнал
+и считает `watchdogKills` для панели телеметрии.
+
+Слушатель, отправляющий убийство в трекер ошибок:
+
+```php
+namespace App\Listeners;
+
+use RuntimeException;
+use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+
+class ReportWorkerWatchdog
+{
+    public function handle(WorkerWatchdogTriggered $workerWatchdogTriggered): void
+    {
+        $watchdogEvent = $workerWatchdogTriggered->watchdogEvent;
+
+        report(new RuntimeException(sprintf(
+            'watchdog %s: worker %d of group "%s" #%d (limit %d ms)',
+            $watchdogEvent->event->value,
+            $watchdogEvent->pid,
+            $watchdogEvent->group,
+            $watchdogEvent->slot,
+            $watchdogEvent->watchdogTimeoutMs,
+        )));
+    }
+}
+```
+
+Слушатель выполняется внутри цикла надзора мастера, и пока он работает, мастер ни за чем
+не следит, поэтому он должен быть коротким. Всё, что он бросит, мастер пишет в журнал и
+отбрасывает.

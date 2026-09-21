@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Demo\App\Support\ScalingSettings;
 use Demo\App\Tasks\HeartbeatTask;
 use Demo\App\Tasks\ScalingTask;
+use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 
 /*
 | The published package config (`vendor:publish --tag=sconcur-laravel`), filled in for
@@ -33,6 +34,10 @@ return [
 
     'scoped_services' => [],
 
+    'listeners' => [
+        WorkerWatchdogTriggered::class => [],
+    ],
+
     'master' => [
         'phpBinary'           => env('SCONCUR_HTTP_PHP_BINARY', 'php'),
         'phpArgs'             => [],
@@ -47,6 +52,7 @@ return [
         'shutdownTimeoutMs'   => (int) env('SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS', 10000),
         'restartBackoffMs'    => (int) env('SCONCUR_HTTP_RESTART_BACKOFF_MS', 200),
         'maxRestartBackoffMs' => (int) env('SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS', 30000),
+        'watchdogTimeoutMs'   => (int) env('SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS', 60000),
 
         // array_values, and not for tidiness: array_filter preserves keys, so dropping
         // the conditional rabbitmq group out of the middle leaves [0 => http, 2 => tasks]

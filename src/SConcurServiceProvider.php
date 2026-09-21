@@ -10,6 +10,7 @@ use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
@@ -134,6 +135,33 @@ class SConcurServiceProvider extends ServiceProvider
                 'sconcur-laravel',
             ]
         );
+
+        $this->registerListeners();
+    }
+
+    /**
+     * Registers the listeners of config('sconcur.listeners'): an event class => a list of
+     * its listeners, the shape EventServiceProvider::$listen has.
+     *
+     * The dispatcher is AsyncApplication's own, bound before any provider, so the
+     * listeners land on the one every process dispatches through — the master's watchdog
+     * events included.
+     */
+    private function registerListeners(): void
+    {
+        $dispatcher = $this->app->make(Dispatcher::class);
+
+        foreach ((array) config('sconcur.listeners', []) as $event => $listeners) {
+            if (!is_string($event) || !is_array($listeners)) {
+                throw new RuntimeException(
+                    'sconcur.listeners must map an event class to a list of its listeners.',
+                );
+            }
+
+            foreach ($listeners as $listener) {
+                $dispatcher->listen($event, $listener);
+            }
+        }
     }
 
     /**

@@ -19,6 +19,7 @@ application sets its own.
 - [The WebSocket protocol](#the-websocket-protocol)
 - [The task pool](#the-task-pool)
 - [Redis](#redis)
+- [Listeners](#listeners)
 
 ## General
 
@@ -43,6 +44,7 @@ installs the adapters in every process.
 | `SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS` | `10000` | graceful worker stop deadline, ms |
 | `SCONCUR_HTTP_RESTART_BACKOFF_MS` | `200` | initial restart backoff, ms |
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | maximum restart backoff, ms |
+| `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS` | `60000` | how long a worker's PHP thread may stay away from the scheduler before the master kills and replaces it; `0` — off, otherwise at least `5000` |
 
 Not from ENV: `workerScript=base_path('artisan')`, `phpArgs=[]`, and
 `runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
@@ -206,3 +208,61 @@ The `sconcur` client and the `sconcur_redis` cache store read no ENV of their ow
 settings are keys of the `redis` section of `config/database.php` and of
 `cache.stores.sconcur_redis`, and the application fills them from whatever variables it
 likes; the keys are in [redis.md](redis.md).
+
+## Listeners
+
+The `sconcur.listeners` section maps an event class to a list of its listeners, the shape
+`EventServiceProvider::$listen` takes. The service provider registers them in every process.
+
+```php
+use App\Listeners\ReportWorkerWatchdog;
+use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+
+'listeners' => [
+    WorkerWatchdogTriggered::class => [
+        ReportWorkerWatchdog::class,
+    ],
+],
+```
+
+| Event | Raised in | When |
+|---|---|---|
+| `SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered` | the master process | the master's watchdog acts on a worker whose PHP thread stopped coming back to the scheduler |
+
+`WorkerWatchdogTriggered::$watchdogEvent` is the library's `SConcur\Worker\WatchdogEvent`:
+`event`, `group`, `slot`, `pid`, `ageSeconds` and `watchdogTimeoutMs`. One kill raises up to
+three events, one per `event`: `HeartbeatLost` when the worker is sent `SIGTERM`,
+`KillEscalated` when it did not exit and is sent `SIGKILL`, `KillSurvived` when the process
+outlived `SIGKILL` and its slot stays down. `ageSeconds` is set on the first one only. The
+event is raised by `sconcur:servers:master:start`; with no listener the master only writes
+its journal and counts `watchdogKills` for the telemetry panel.
+
+A listener that sends the kill to the error tracker:
+
+```php
+namespace App\Listeners;
+
+use RuntimeException;
+use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+
+class ReportWorkerWatchdog
+{
+    public function handle(WorkerWatchdogTriggered $workerWatchdogTriggered): void
+    {
+        $watchdogEvent = $workerWatchdogTriggered->watchdogEvent;
+
+        report(new RuntimeException(sprintf(
+            'watchdog %s: worker %d of group "%s" #%d (limit %d ms)',
+            $watchdogEvent->event->value,
+            $watchdogEvent->pid,
+            $watchdogEvent->group,
+            $watchdogEvent->slot,
+            $watchdogEvent->watchdogTimeoutMs,
+        )));
+    }
+}
+```
+
+The listener runs inside the master's supervision tick, and the master supervises nothing
+while it runs, so it has to be short. Whatever it throws is written to the master's journal
+and dropped.

@@ -27,14 +27,14 @@ in [websocket.md](websocket.md).
 |---|---|---|
 | PHP | 8.4, NTS | |
 | `ext-msgpack` | 3.0.1 | every payload crossing the PHP↔extension boundary; a hard requirement of `sconcur/sconcur`, enforced by composer |
-| the `sconcur` extension | 0.13.1 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
+| the `sconcur` extension | 0.14.0 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
 | `ext-pcntl` | — | graceful shutdown of the master and of every long-lived worker |
 | MySQL | 8.4 | only for the `sconcur_mysql` connection |
 | RabbitMQ | 4.1 | only for the `sconcur_rabbitmq` queue |
 | Redis | 8.2 | only for the `sconcur` Redis client and the `sconcur_redis` cache store |
 
 The `.so` and the PHP side cross a protocol boundary that changes with the version, so
-`sconcur/sconcur` is pinned exactly (`0.13.1`) rather than with a caret, and the
+`sconcur/sconcur` is pinned exactly (`0.14.0`) rather than with a caret, and the
 extension has to match it exactly: a version that drifted is rejected on load rather
 than working somehow.
 

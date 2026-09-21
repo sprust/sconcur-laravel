@@ -11,7 +11,7 @@ use SConcur\Laravel\Redis\Exceptions\UnsupportedRedisOptionException;
  *
  * The entry keeps the shape Laravel gives it — `scheme`, `host`, `port`, `path`,
  * `username`, `password`, `database` — and the feature takes one URL. Checked against
- * the parser the extension carries (ext/src/features/redis/dsn.rs) in sconcur 0.13.1:
+ * the parser the extension carries (ext/src/features/redis/dsn.rs) in sconcur 0.14.0:
  *
  * - `redis://` for TCP, `rediss://` for TLS, `unix://` for a socket, where the path is
  *   the socket and `db`, `user` and `pass` travel as query parameters because they have

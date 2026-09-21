@@ -300,6 +300,21 @@ connection, the next send reconnects, and only that one snapshot is lost. A clos
 connection means to the master that the worker has gone. The master marks a worker `hung`
 when there has been no snapshot for longer than 15 seconds.
 
+The pool sends its snapshots from PHP, so a frozen PHP thread shows as `hung` here, unlike
+in the runtimes whose snapshots come from the extension's own thread. `hung` only marks the
+worker; what acts on a frozen thread is the master's watchdog. Every return of the PHP thread to the
+scheduler marks the worker alive, and the pool returns there all the time — the
+controller's pauses go through `Sleeper`, and preemption parks a tick that computes — so an
+idle pool is not taken for a stuck one. A tick that holds the thread in a native call —
+`usleep()`, a PDO query, `curl` — marks nothing, and past `watchdogTimeoutMs` (60 s by
+default, `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS`) the master sends the process `SIGTERM`. The
+pool takes it like any other `SIGTERM`: it waits for the running ticks and exits with zero,
+and under `restartPolicy: on-failure` the master reads a zero as a finished worker and
+brings up no replacement. The pool stays down until `sconcur:servers:master:reload`, the
+same as after `sconcur:tasks:stop`. Only a process the stop deadline had to finish off with
+`SIGKILL` is replaced. A task that legitimately blocks that long needs the threshold raised
+past it, or `0` for the `tasks` group.
+
 A group the panel says nothing about — with the pool stopped, for instance — is drawn in
 with zeros by the application's dashboard so that it does not look non-existent
 (`SconcurStatClient`).

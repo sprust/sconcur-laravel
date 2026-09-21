@@ -5,10 +5,11 @@
 Что где лежит в репозитории.
 
 ```
-config/sconcur.php             — конфиг (panel_host, scoped_services, master + groups, queue, ws, tasks)
+config/sconcur.php             — конфиг (panel_host, scoped_services, listeners, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider.php — провайдер (команды + проводка адаптеров в воркере)
 src/Console/                   — артизан-команды
-src/Servers/                   — MasterRunner (обёртка над SConcur\Worker\MasterCli)
+src/Servers/                   — MasterRunner (обёртка над SConcur\Worker\MasterCli),
+                                 WatchdogEventForwarder, Events/WorkerWatchdogTriggered
 src/Queue/Rabbitmq/            — драйвер очереди и консьюмер-пул (Connector, Queue, Job, ConsumerRunner)
 src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам)
 src/Database/Mysql/            — соединение sconcur_mysql (Connector, Connection, Dsn, TransactionStack)

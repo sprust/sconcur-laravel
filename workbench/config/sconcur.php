@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+use Workbench\App\Listeners\RecordWorkerWatchdog;
 use Workbench\App\Tasks\CountingTask;
 use Workbench\App\Tasks\IdleTask;
 
@@ -19,6 +21,12 @@ return [
 
     'scoped_services' => [],
 
+    'listeners' => [
+        WorkerWatchdogTriggered::class => [
+            RecordWorkerWatchdog::class,
+        ],
+    ],
+
     'master' => [
         'phpBinary'           => 'php',
         'phpArgs'             => [],
@@ -33,6 +41,7 @@ return [
         'shutdownTimeoutMs'   => 5000,
         'restartBackoffMs'    => 200,
         'maxRestartBackoffMs' => 5000,
+        'watchdogTimeoutMs'   => 60000,
 
         'groups' => array_values(array_filter([
             [

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+
 // Published into the application (`vendor:publish --tag=sconcur-laravel`) and read from
 // there, not from here. See the package README.
 return [
@@ -25,6 +27,24 @@ return [
     */
     'scoped_services' => [
         // \Some\Package\Manager::class,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Listeners
+    |--------------------------------------------------------------------------
+    | Listeners of the package's events, registered by the service provider: an
+    | event class => a list of its listeners, the way EventServiceProvider::$listen
+    | takes them.
+    |
+    | WorkerWatchdogTriggered is raised in the master process when its watchdog
+    | kills a worker whose PHP thread stopped answering. It runs inside the
+    | master's supervision tick, so a listener has to be short.
+    */
+    'listeners' => [
+        WorkerWatchdogTriggered::class => [
+            // \App\Listeners\ReportWorkerWatchdog::class,
+        ],
     ],
 
     /*
@@ -55,6 +75,7 @@ return [
         'shutdownTimeoutMs'   => (int) env('SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS', 10000),
         'restartBackoffMs'    => (int) env('SCONCUR_HTTP_RESTART_BACKOFF_MS', 200),
         'maxRestartBackoffMs' => (int) env('SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS', 30000),
+        'watchdogTimeoutMs'   => (int) env('SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS', 60000),
 
         // array_values, and not for tidiness: array_filter preserves keys, so dropping
         // the conditional rabbitmq group out of the middle leaves [0 => http, 2 => tasks]
