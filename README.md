@@ -38,6 +38,7 @@ TrueAsync context). The worker's PSR-7 bridge follows Laravel Octane's model.
 | [Configuration (ENV)](docs/configuration.md) | every environment variable and its default |
 | [Database](docs/database.md) | the `sconcur_mysql` connection, per-coroutine transactions, and the PDO connection's limit |
 | [Redis](docs/redis.md) | the `sconcur` Redis client, the `sconcur_redis` cache store, and what they refuse |
+| [Filesystem](docs/filesystem.md) | the `sconcur_local` disk and the `File` facade on the Files feature |
 | [Queue](docs/queue.md) | the `sconcur_rabbitmq` driver and the consumer pool |
 | [WebSocket](docs/websocket.md) | the ws pool: examples, the protocol, channel signatures, the bus, presence |
 | [The task pool](docs/task-pool.md) | periodic tasks, a coroutine each |

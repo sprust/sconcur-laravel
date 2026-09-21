@@ -19,6 +19,7 @@
 - [Протокол WebSocket](#протокол-websocket)
 - [Пул задач](#пул-задач)
 - [Redis](#redis)
+- [Файловая система](#файловая-система)
 - [Слушатели](#слушатели)
 
 ## Общие
@@ -207,6 +208,18 @@
 Своих переменных окружения у клиента `sconcur` и кэш-стора `sconcur_redis` нет. Их
 настройки — ключи секции `redis` в `config/database.php` и `cache.stores.sconcur_redis`, а
 приложение заполняет их из любых переменных; ключи перечислены в [redis.ru.md](redis.ru.md).
+
+## Файловая система
+
+Как это устроено — в [filesystem.ru.md](filesystem.ru.md).
+
+| ENV | Дефолт | Назначение |
+|---|---|---|
+| `SCONCUR_FILESYSTEM_FILES` | `false` | перевести фасад `File` на фичу Files для `copy`, `move`, `hash` и `replace` внутри корутины |
+| `SCONCUR_FILESYSTEM_TIMEOUT_MS` | `0` | дедлайн одного такого вызова, мс; `0` — нет |
+
+Своих ENV у диска `sconcur_local` нет: его `timeout_ms` — ключ его записи в
+`config/filesystems.php`.
 
 ## Слушатели
 

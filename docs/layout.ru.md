@@ -5,7 +5,7 @@
 Что где лежит в репозитории.
 
 ```
-config/sconcur.php             — конфиг (panel_host, scoped_services, listeners, master + groups, queue, ws, tasks)
+config/sconcur.php             — конфиг (panel_host, scoped_services, filesystem, listeners, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider.php — провайдер (команды + проводка адаптеров в воркере)
 src/Console/                   — артизан-команды
 src/Servers/                   — MasterRunner (обёртка над SConcur\Worker\MasterCli),
@@ -16,9 +16,13 @@ src/Database/Mysql/            — соединение sconcur_mysql (Connector
 src/Redis/                     — Redis-клиент sconcur (Connector, Connection, Dsn, CommandBatch,
                                  CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,
                                  PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
+src/Filesystem/                — диск sconcur_local и фасад File на фиче Files
+                                 (SconcurLocalFilesystemAdapter, SconcurLocalDiskFactory, Filesystem,
+                                 FilesFeatureCall)
 src/Cache/Redis/               — кэш-стор sconcur_redis (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер),
-                                 ProcessMemory (резидентная память процесса, RSS)
+                                 ProcessMemory (резидентная память процесса, RSS),
+                                 Coroutine (выполняется ли вызывающий код в корутине)
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — канал управления через кэш (stop/restart из другого контейнера)

@@ -31,7 +31,8 @@ implementations are.
 
 Beside the runtimes, the extension's features back Laravel drivers: `sconcur_mysql`
 (`src/Database/Mysql/`), the `sconcur` Redis client of `RedisManager` (`src/Redis/`) and
-the `sconcur_redis` cache store (`src/Cache/Redis/`).
+the `sconcur_redis` cache store (`src/Cache/Redis/`), the `sconcur_local` disk and, behind a flag,
+the `files` binding (`src/Filesystem/`).
 
 ## Further reading
 
@@ -136,7 +137,12 @@ src/Redis/                      — Connector (the RedisManager client, and ever
                                   spreading), BlockingCommands (deadlines of waiting
                                   commands), UnsupportedCalls, Limiters/, Exceptions/
 src/Cache/Redis/                — Store, Lock (cooperative block()), StoreFactory
+src/Filesystem/                 — SconcurLocalFilesystemAdapter + SconcurLocalDiskFactory (the
+                                  sconcur_local disk), Filesystem (the `files` binding behind
+                                  sconcur.filesystem.files), FilesFeatureCall (feature in a
+                                  coroutine, native outside it and on a failure)
 src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
+src/Support/Coroutine           — whether the caller runs in a coroutine
 src/Support/ProcessMemory       — the resident set size of the process, for memory limits
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
@@ -220,8 +226,18 @@ Points worth knowing before changing anything:
 - **A retry loop must not pause with `usleep()`/`Sleep::usleep()` inside a coroutine** — it
   freezes the worker. `Cache\Redis\Lock::block()` and the `Redis\Limiters\` subclasses pause
   through `Support\CooperativeSleep`; the tests measure it with a ticker coroutine
-  (`BaseRedisTestCase::longestStallMs()`), and a test proves the measurement sees a native
+  (`MeasuresStallsTrait::longestStallMs()`), and a test proves the measurement sees a native
   pause.
+- **The Files feature under Laravel's filesystem answers like the native code, failures
+  included.** `FilesFeatureCall` runs the feature only inside a coroutine, and a
+  `FilesException` hands the call to the parent, which fails the way callers have always
+  seen — so no `SConcur\Exceptions\Files\*` reaches them. `FileStoppedException` and
+  `FileTimeoutException` are not handed over. The `files` binding is replaced only under
+  `sconcur.filesystem.files`: the framework resolves it on every request, and its metadata
+  calls stay native. The disk writes on the feature only with `'lock' => 0` — the feature
+  has no `flock`. `FilesystemParityTest` and `SconcurLocalDiskParityTest` require the same
+  answer, exception and files as the native implementation; to extend coverage, add a case
+  there first.
 - **`Redis::` on the sconcur client must answer like `PhpRedisConnection`.** The facade is a
   thin layer: past Laravel's ~25 overrides a call goes to phpredis's own method, so the
   contract applications rely on is phpredis's signatures and reply shapes (status → `true`,

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SConcur\Laravel\Support;
 
-use Fiber;
 use Illuminate\Support\Sleep;
 use SConcur\Features\Sleeper\Sleeper;
 
@@ -20,7 +19,7 @@ class CooperativeSleep
 {
     public static function usleep(int $microseconds): void
     {
-        if (Fiber::getCurrent() !== null && extension_loaded('sconcur')) {
+        if (Coroutine::isActive()) {
             Sleeper::usleep($microseconds);
 
             return;

@@ -5,7 +5,7 @@ English | [Русский](layout.ru.md)
 What lies where in the repository.
 
 ```
-config/sconcur.php             — the config (panel_host, scoped_services, listeners, master + groups, queue, ws, tasks)
+config/sconcur.php             — the config (panel_host, scoped_services, filesystem, listeners, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider.php — the provider (commands + wiring the adapters into the worker)
 src/Console/                   — artisan commands
 src/Servers/                   — MasterRunner (a wrapper over SConcur\Worker\MasterCli),
@@ -16,9 +16,13 @@ src/Database/Mysql/            — the sconcur_mysql connection (Connector, Conn
 src/Redis/                     — the sconcur Redis client (Connector, Connection, Dsn, CommandBatch,
                                  CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,
                                  PhpRedisReplies, UnsupportedCalls, Limiters, Exceptions)
+src/Filesystem/                — the sconcur_local disk and the File facade on the Files feature
+                                 (SconcurLocalFilesystemAdapter, SconcurLocalDiskFactory, Filesystem,
+                                 FilesFeatureCall)
 src/Cache/Redis/               — the sconcur_redis cache store (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (a retry pause that does not freeze the worker),
-                                 ProcessMemory (the resident set size of the process)
+                                 ProcessMemory (the resident set size of the process),
+                                 Coroutine (whether the caller runs in a coroutine)
 src/Tasks/                     — the periodic task pool (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)
 src/Tasks/Control/             — the control channel through the cache (stop/restart from another container)

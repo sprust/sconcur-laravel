@@ -38,6 +38,7 @@ Coroutine-scoped модель (`AsyncApplication` плюс состояние н
 | [Конфигурация (ENV)](docs/configuration.ru.md) | все переменные окружения и их дефолты |
 | [База данных](docs/database.ru.md) | соединение `sconcur_mysql`, транзакции на корутину и ограничение PDO-соединения |
 | [Redis](docs/redis.ru.md) | Redis-клиент `sconcur`, кэш-стор `sconcur_redis` и то, от чего они отказываются |
+| [Файловая система](docs/filesystem.ru.md) | диск `sconcur_local` и фасад `File` на фиче Files |
 | [Очередь](docs/queue.ru.md) | драйвер `sconcur_rabbitmq` и пул консьюмеров |
 | [WebSocket](docs/websocket.ru.md) | ws-пул: примеры, протокол, подписи каналов, шина, presence |
 | [Пул задач](docs/task-pool.ru.md) | периодические задачи, по корутине на каждую |

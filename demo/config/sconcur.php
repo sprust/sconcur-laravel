@@ -34,6 +34,11 @@ return [
 
     'scoped_services' => [],
 
+    'filesystem' => [
+        'files'      => (bool) env('SCONCUR_FILESYSTEM_FILES', false),
+        'timeout_ms' => (int) env('SCONCUR_FILESYSTEM_TIMEOUT_MS', 0),
+    ],
+
     'listeners' => [
         WorkerWatchdogTriggered::class => [],
     ],

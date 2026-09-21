@@ -31,6 +31,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Filesystem
+    |--------------------------------------------------------------------------
+    | `files`: put the File facade (the `files` binding) on the Files feature for
+    | copy, move, hash and replace inside a coroutine. Off by default: the
+    | framework resolves `files` on every request. The `sconcur_local` disk driver
+    | needs nothing here — a disk names it in config/filesystems.php.
+    |
+    | `timeout_ms`: the deadline of one such call; 0 is none, as natively.
+    */
+    'filesystem' => [
+        'files'      => (bool) env('SCONCUR_FILESYSTEM_FILES', false),
+        'timeout_ms' => (int) env('SCONCUR_FILESYSTEM_TIMEOUT_MS', 0),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Listeners
     |--------------------------------------------------------------------------
     | Listeners of the package's events, registered by the service provider: an

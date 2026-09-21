@@ -21,6 +21,11 @@ return [
 
     'scoped_services' => [],
 
+    'filesystem' => [
+        'files'      => false,
+        'timeout_ms' => 0,
+    ],
+
     'listeners' => [
         WorkerWatchdogTriggered::class => [
             RecordWorkerWatchdog::class,

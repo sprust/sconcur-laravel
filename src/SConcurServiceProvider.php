@@ -12,6 +12,9 @@ use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Filesystem\Filesystem as IlluminateFilesystem;
+use Illuminate\Filesystem\FilesystemManager;
+use Illuminate\Filesystem\LocalFilesystemAdapter;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
 use SConcur\Laravel\Config\AsyncConfig;
@@ -35,6 +38,9 @@ use SConcur\Laravel\Console\WsStartCommand;
 use SConcur\Laravel\Database\CoroutineTransactionsManager;
 use SConcur\Laravel\Database\Mysql\Connection as SconcurMysqlConnection;
 use SConcur\Laravel\Database\Mysql\Connector as SconcurMysqlConnector;
+use SConcur\Laravel\Filesystem\Filesystem as SconcurFilesystem;
+use SConcur\Laravel\Filesystem\SconcurLocalDiskFactory;
+use SConcur\Laravel\Filesystem\SconcurLocalFilesystemAdapter;
 use SConcur\Laravel\Queue\Rabbitmq\Connector;
 use SConcur\Laravel\Redis\Connector as RedisConnector;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
@@ -118,6 +124,7 @@ class SConcurServiceProvider extends ServiceProvider
         $this->registerDatabaseDriver();
         $this->registerRedisClient();
         $this->registerCacheStore();
+        $this->registerFilesystem();
         $this->registerCoroutineTransactionsManager();
         $this->registerTaskPool();
         $this->registerWsPool();
@@ -404,6 +411,37 @@ class SConcurServiceProvider extends ServiceProvider
 
                 return $cacheManager->repository($store, $config);
             });
+        });
+    }
+
+    /**
+     * The Files feature under Laravel's filesystem: the `sconcur_local` disk driver always,
+     * the `files` binding only when config('sconcur.filesystem.files') asks for it.
+     *
+     * The disk is opt-in by itself — an application names it in config/filesystems.php.
+     * The binding is not: the framework resolves `files` on every request, so replacing it
+     * is the application's decision rather than a side effect of installing the package.
+     * extend() rather than singleton(), because `files` may be resolved already.
+     */
+    private function registerFilesystem(): void
+    {
+        $this->callAfterResolving('filesystem', static function (FilesystemManager $filesystemManager): void {
+            $filesystemManager->extend(
+                SconcurLocalFilesystemAdapter::DRIVER,
+                static fn(Container $app, array $config): LocalFilesystemAdapter => (new SconcurLocalDiskFactory())->make($config),
+            );
+        });
+
+        // The flag is read when `files` is resolved rather than here, so it is the config
+        // the application ends up with that decides, not the one it had at this point.
+        $this->app->extend('files', static function (IlluminateFilesystem $files): IlluminateFilesystem {
+            if (!(bool) config('sconcur.filesystem.files', false)) {
+                return $files;
+            }
+
+            return new SconcurFilesystem(
+                timeoutMs: (int) config('sconcur.filesystem.timeout_ms', 0),
+            );
         });
     }
 

@@ -19,6 +19,7 @@ application sets its own.
 - [The WebSocket protocol](#the-websocket-protocol)
 - [The task pool](#the-task-pool)
 - [Redis](#redis)
+- [Filesystem](#filesystem)
 - [Listeners](#listeners)
 
 ## General
@@ -208,6 +209,18 @@ The `sconcur` client and the `sconcur_redis` cache store read no ENV of their ow
 settings are keys of the `redis` section of `config/database.php` and of
 `cache.stores.sconcur_redis`, and the application fills them from whatever variables it
 likes; the keys are in [redis.md](redis.md).
+
+## Filesystem
+
+How it works is in [filesystem.md](filesystem.md).
+
+| ENV | Default | What it does |
+|---|---|---|
+| `SCONCUR_FILESYSTEM_FILES` | `false` | put the `File` facade on the Files feature for `copy`, `move`, `hash` and `replace` inside a coroutine |
+| `SCONCUR_FILESYSTEM_TIMEOUT_MS` | `0` | the deadline of one such call, ms; `0` — none |
+
+A `sconcur_local` disk reads no ENV of its own: its `timeout_ms` is a key of its entry in
+`config/filesystems.php`.
 
 ## Listeners
 
