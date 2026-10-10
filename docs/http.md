@@ -141,18 +141,22 @@ A coroutine is suspended while a buffer is open in two cases:
 
 - it waits on a feature inside the buffer — a query while a view renders (a relation
   loaded lazily), a Redis command, `Sleeper`;
-- preemption parks it: the HTTP server interrupts a handler every `preemptionQuantumMs` of
-  CPU (5 ms by default), so a render longer than that is enough.
+- preemption parks it, when it is on: with `preemptionQuantumMs` above `0` in the `server`
+  block of the `http` group, the HTTP server interrupts a handler every quantum of CPU, so
+  a render longer than that is enough. It is off by default.
 
 This is how Blade and every PHP template engine render: `ob_start()`, the template,
 `ob_get_clean()`. It is also how a printing `StreamedResponse` is run. Views that load no
-data and render within the quantum are not affected; views that wait inside or render longer
-are, as soon as two such requests run in one worker.
+data are not affected, and with preemption on neither are those that render within the
+quantum; views that wait inside are, and with preemption on those that render longer too,
+as soon as two such requests run in one worker.
 
 What keeps a response out of it:
 
 - load the data before rendering, so that nothing waits inside a view;
 - stream with `yield` rather than with `echo` — a generator uses no buffer at all;
-- `preemptionQuantumMs = 0` in the `server` block of the `http` group turns preemption off.
-  That removes the second case but not the first, and lets a CPU-bound handler hold the
-  other requests of its worker.
+- leave preemption off (`preemptionQuantumMs = 0`, the default). That keeps the second case
+  away but not the first, and lets a CPU-bound handler hold the other requests of its
+  worker. Output buffers are not the only process-wide state preemption exposes: the
+  library lists the rest in `vendor/sconcur/sconcur/docs/coroutine-switching.md`
+  (Process-wide state).

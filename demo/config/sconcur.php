@@ -141,7 +141,12 @@ return [
                     'maxConnections'     => (int) env('SCONCUR_WS_MAX_CONNECTIONS', 0),
 
                     'shutdownTimeoutMs'   => (int) env('SCONCUR_WS_SHUTDOWN_TIMEOUT_MS', 10000),
-                    'preemptionQuantumMs' => (int) env('SCONCUR_WS_PREEMPTION_QUANTUM_MS', 5),
+
+                    // Off, as in the library: with preemption on, a neighbour runs between
+                    // any two statements of a handler and overwrites the state PHP keeps per
+                    // process (json_last_error(), error_get_last(), output buffers). See
+                    // docs/configuration.md.
+                    'preemptionQuantumMs' => (int) env('SCONCUR_WS_PREEMPTION_QUANTUM_MS', 0),
                 ],
             ],
 

@@ -143,7 +143,7 @@ The `server` block of the `ws` group.
 | `SCONCUR_WS_MAX_CONCURRENCY` | `0` | connections served at once (0 = ∞) |
 | `SCONCUR_WS_MAX_CONNECTIONS` | `0` | stop after N served connections (0 = ∞) |
 | `SCONCUR_WS_SHUTDOWN_TIMEOUT_MS` | `10000` | graceful stop deadline, ms |
-| `SCONCUR_WS_PREEMPTION_QUANTUM_MS` | `5` | preemption quantum while serving |
+| `SCONCUR_WS_PREEMPTION_QUANTUM_MS` | `0` | preemption quantum while serving; `0` — off |
 
 `handlerTimeoutMs` is not among them and is hard-coded to `0`. Here it is a deadline on the
 whole life of a connection rather than on one frame, so any value above zero disconnects
@@ -151,6 +151,22 @@ every client on a timer — there is no setting of it a ws pool wants.
 
 The path is compared without the query string, so `/app/{key}?protocol=7&client=js`
 matches and a wrong key is a `404` on the handshake, before PHP sees it.
+
+`SCONCUR_WS_PREEMPTION_QUANTUM_MS` is `0`, and preemption is off — the library's own
+default. With it on, the extension parks a handler on a timer, so another coroutine can run
+between any two of its statements. Some PHP state belongs to the process rather than to a
+coroutine — `json_last_error()`, `preg_last_error()`, `error_get_last()`, output buffers,
+error handlers — and a neighbour that runs in between overwrites it: the handler reads
+another connection's result. The engine checks the timer right after an internal call
+returns, so a switch between `json_decode()` and `json_last_error()` is the likely case, not
+a rare one. The price of `0`: a handler that computes without waiting holds the other
+connections of its worker until it finishes. A quantum above zero is for a worker whose
+handlers and their libraries read none of that state; the full list, with the safe form of
+each, is in `vendor/sconcur/sconcur/docs/coroutine-switching.md` (Process-wide state).
+
+The `http` and `rabbitmq` groups carry no such key and run on the same default for the same
+reason. `preemptionQuantumMs` added to their `server` block turns it on: both commands
+declare the flag.
 
 ## The WebSocket protocol
 

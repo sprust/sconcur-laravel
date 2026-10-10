@@ -102,7 +102,7 @@ Six containers, prefix `scl-`:
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
 asset. **`composer.lock` must stay committed** — without it a fresh clone has nothing
-to pin against. The library version is pinned exactly (`0.14.0`, not a caret): the
+to pin against. The library version is pinned exactly (`0.15.0`, not a caret): the
 `.so` and the PHP side cross a protocol boundary that changes with the version.
 
 ## Architecture
@@ -286,11 +286,12 @@ Points worth knowing before changing anything:
   is not an option at all: PHP keeps its "handler running" flag up, and every other
   coroutine's `ob_start()` becomes fatal (under preemption, a segfault).
 - **Output buffers are process-wide, and coroutines mix them.** A coroutine suspended with
-  a buffer open — a wait inside a Blade render, or preemption during a render longer than
-  the quantum — leaves it to its neighbours, and their `ob_get_clean()` take each other's
-  output (measured on the live pool: 39 of 40 concurrent responses of a 6 ms template
-  mixed). Not fixed here: it needs the scheduler to save and restore a coroutine's buffers
-  on every suspension, which is library work. `docs/http.md` (Output buffers) says what
+  a buffer open — a wait inside a Blade render, or preemption (when a group arms it)
+  during a render longer than the quantum — leaves it to its neighbours, and their
+  `ob_get_clean()` take each other's output (measured on the live pool with a 5 ms quantum:
+  39 of 40 concurrent responses of a 6 ms template mixed). Not fixed here: it needs the
+  scheduler to save and restore a coroutine's buffers on every suspension, which is library
+  work. `docs/http.md` (Output buffers) says what
   keeps a response out of it.
 - **An `UPDATE` counting matched rows instead of changed ones cannot be fixed here, and
   the investigation is done.** The extension's driver negotiates `CLIENT_FOUND_ROWS`;

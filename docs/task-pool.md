@@ -334,11 +334,12 @@ signal (a `pcntl` handler runs only while PHP code is executing) and polls the c
 channel. Without preemption a long non-preemptible stretch inside somebody else's `tick()`
 delays both, which means it hits the pool's stop.
 
-The quantum is deliberately coarser than the library's default of 5 ms. Those 5 ms are
-meant for a server where dozens of handlers share the thread and a neighbouring request's
-latency is counted in milliseconds; here there are a few coroutines, most of the time is
-sleep, and nobody is waiting for a reply. The worst case reaction to `SIGTERM` is the
-preemption quantum plus the sleep quantum, about 1.25 s against a 20 second stop deadline.
+The quantum is deliberately coarser than the 5 ms the library recommends for a server that
+arms preemption. Those 5 ms are meant for a server where dozens of handlers share the
+thread and a neighbouring request's latency is counted in milliseconds; here there are a few
+coroutines, most of the time is sleep, and nobody is waiting for a reply. The worst case
+reaction to `SIGTERM` is the preemption quantum plus the sleep quantum, about 1.25 s against
+a 20 second stop deadline.
 
 Preemption does not evict a native blocking call — only PHP userland code. For that there
 is the hard stop deadline.
