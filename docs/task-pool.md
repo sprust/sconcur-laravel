@@ -118,7 +118,7 @@ failed tick gets, and for the same reason.
     'lock_path'                => storage_path('sconcur/runtime/tasks.lock'),
     'memory_mb'                => 256,
     'sleep_chunk_ms'           => 250,
-    'preemption_quantum_ms'    => 1000,
+    'preemption_quantum_ms'    => 0,
     'report_ticks'             => true,
     'shutdown_timeout_seconds' => 20,
 
@@ -327,24 +327,34 @@ with zeros by the application's dashboard so that it does not look non-existent
 
 `preemption_quantum_ms` turns on automatic coroutine switching: the extension interrupts
 the VM on a timer and parks the current coroutine, so a tick that went into pure
-computation cannot freeze its neighbours. It is on, with a quantum of 1000 ms.
+computation cannot freeze its neighbours. It is `0` by default, that is off, as in the
+library.
 
-The one that must not be frozen is the controller above all: its tick is what delivers the
-signal (a `pcntl` handler runs only while PHP code is executing) and polls the control
-channel. Without preemption a long non-preemptible stretch inside somebody else's `tick()`
-delays both, which means it hits the pool's stop.
+With it on, another task can run between any two statements of a tick, and some PHP state
+belongs to the process rather than to a coroutine: `json_last_error()`, `preg_last_error()`,
+`error_get_last()`, output buffers, error handlers. A neighbour that runs in between
+overwrites it, and the tick reads another task's result. The engine checks the timer right
+after an internal call returns, so a switch between `json_decode()` and `json_last_error()`
+is the likely case, not a rare one. The full list, with the safe form of each, is in
+`vendor/sconcur/sconcur/docs/coroutine-switching.md` (Process-wide state).
 
-The quantum is deliberately coarser than the 5 ms the library recommends for a server that
-arms preemption. Those 5 ms are meant for a server where dozens of handlers share the
-thread and a neighbouring request's latency is counted in milliseconds; here there are a few
-coroutines, most of the time is sleep, and nobody is waiting for a reply. The worst case
-reaction to `SIGTERM` is the preemption quantum plus the sleep quantum, about 1.25 s against
-a 20 second stop deadline.
+The price of `0`: a tick that computes without waiting holds every other coroutine of the
+pool until it returns. That includes the controller, whose tick delivers the signal (a
+`pcntl` handler runs only while PHP code is executing) and polls the control channel, so
+such a tick delays the pool's stop by as long as it computes. A tick that waits through
+SConcur — `sconcur_mysql`, `Sleeper`, the feature's HTTP client — suspends its coroutine and
+holds nobody.
+
+A quantum above zero is for a pool whose tasks and their libraries read none of that state.
+A coarse one is enough there: a few coroutines, most of the time asleep, nobody waiting for a
+reply. With 1000 ms rather than the 5 ms the library recommends for a server, the worst case
+reaction to `SIGTERM` is the quantum plus the sleep quantum, about 1.25 s against a 20 second
+stop deadline.
 
 Preemption does not evict a native blocking call — only PHP userland code. For that there
 is the hard stop deadline.
 
-`0` turns it off. That is what a task holding a MySQL transaction on the shared `mysql`
-connection needs: there the PDO object is one per process, and preemption lets a
-neighbouring task get inside somebody else's transaction. On `sconcur_mysql` there is no
-such thing — see [database.md](database.md).
+With preemption on, a task holding a MySQL transaction on the shared `mysql` connection is
+exposed too: there the PDO object is one per process, and preemption lets a neighbouring
+task get inside somebody else's transaction. On `sconcur_mysql` there is no such thing — see
+[database.md](database.md).

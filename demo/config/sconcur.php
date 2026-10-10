@@ -220,7 +220,7 @@ return [
         'memory_mb'   => (int) env('SCONCUR_TASKS_MEMORY_MB', 256),
 
         'sleep_chunk_ms'        => (int) env('SCONCUR_TASKS_SLEEP_CHUNK_MS', 250),
-        'preemption_quantum_ms' => (int) env('SCONCUR_TASKS_PREEMPTION_QUANTUM_MS', 1000),
+        'preemption_quantum_ms' => (int) env('SCONCUR_TASKS_PREEMPTION_QUANTUM_MS', 0),
         'report_ticks'          => (bool) env('SCONCUR_TASKS_REPORT_TICKS', true),
 
         // Below the master's shutdownTimeoutMs for this group (30 s above), or the

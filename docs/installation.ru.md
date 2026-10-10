@@ -105,12 +105,12 @@ SCONCUR_HTTP_NAME=my-app
 SCONCUR_HTTP_ADDRESS=0.0.0.0:28080
 SCONCUR_HTTP_WORKER_COUNT=2
 
-# панель телеметрии: пустой токен её выключает
+# telemetry panel: an empty token turns it off
 SCONCUR_HTTP_PANEL_PORT=28081
 SCONCUR_HTTP_ADMIN_TOKEN=change-me
 SCONCUR_PANEL_HOST=http://127.0.0.1:28081/api/stats
 
-# пул консьюмеров: меньше 1 — группы в конфиге мастера не будет вовсе
+# the consumer pool: below 1 leaves the group out of the master config entirely
 SCONCUR_RABBITMQ_WORKER_COUNT=0
 ```
 

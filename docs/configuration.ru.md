@@ -30,8 +30,8 @@
 по умолчанию, так что нужны только изменённые строки. Четыре из них — не простые значения:
 у `SCONCUR_RABBITMQ_DSN` значения по умолчанию нет, показан пример; `SCONCUR_WS_PATH` и
 `SCONCUR_WS_BUS_DSN` собираются из других переменных так же, как их собирает конфиг (`.env`
-раскрывает `${...}`, и только из строк выше); `SCONCUR_TASKS_LOCK_PATH` закомментирована, потому что её значение по
-умолчанию вычисляет `storage_path()`, а пустое значение — не оно.
+раскрывает `${...}`, и только из строк выше); `SCONCUR_TASKS_LOCK_PATH` закомментирована,
+потому что её значение по умолчанию вычисляет `storage_path()`, а пустое значение — не оно.
 
 ```dotenv
 SCONCUR_PANEL_HOST=http://127.0.0.1:28081/api/stats
@@ -118,7 +118,7 @@ SCONCUR_TASKS_CONTROL_KEY=sconcur:tasks:control
 #SCONCUR_TASKS_LOCK_PATH=
 SCONCUR_TASKS_MEMORY_MB=256
 SCONCUR_TASKS_SLEEP_CHUNK_MS=250
-SCONCUR_TASKS_PREEMPTION_QUANTUM_MS=1000
+SCONCUR_TASKS_PREEMPTION_QUANTUM_MS=0
 SCONCUR_TASKS_REPORT_TICKS=true
 SCONCUR_TASKS_SHUTDOWN_TIMEOUT_SECONDS=20
 SCONCUR_TASKS_SHUTDOWN_TIMEOUT_MS=30000
@@ -317,7 +317,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 | `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | путь flock; не даёт стартовать второй копии задачи |
 | `SCONCUR_TASKS_MEMORY_MB` | `256` | лимит памяти процесса, по большему из кучи PHP и RSS; за ним — выход с `EXIT_RESTART` |
 | `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | насколько мелко режется пауза, то есть как быстро пул замечает сигнал |
-| `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `1000` | автоматическое переключение корутин; `0` — выключено |
+| `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `0` | автоматическое переключение корутин; `0` — выключено |
 | `SCONCUR_TASKS_REPORT_TICKS` | `true` | показывать тики в секции `consumers` панели |
 | `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_SECONDS` | `20` | сколько ждать текущие тики, прежде чем размотать группу |
 | `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_MS` | `30000` | сколько мастер ждёт воркера пула; обязан быть больше предыдущего |

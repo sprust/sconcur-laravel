@@ -119,7 +119,7 @@ SCONCUR_TASKS_CONTROL_KEY=sconcur:tasks:control
 #SCONCUR_TASKS_LOCK_PATH=
 SCONCUR_TASKS_MEMORY_MB=256
 SCONCUR_TASKS_SLEEP_CHUNK_MS=250
-SCONCUR_TASKS_PREEMPTION_QUANTUM_MS=1000
+SCONCUR_TASKS_PREEMPTION_QUANTUM_MS=0
 SCONCUR_TASKS_REPORT_TICKS=true
 SCONCUR_TASKS_SHUTDOWN_TIMEOUT_SECONDS=20
 SCONCUR_TASKS_SHUTDOWN_TIMEOUT_MS=30000
@@ -317,7 +317,7 @@ How the pool works is in [task-pool.md](task-pool.md).
 | `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | flock path; keeps a second copy of a task from starting |
 | `SCONCUR_TASKS_MEMORY_MB` | `256` | process memory limit, against the larger of the PHP heap and RSS; past it, an exit with `EXIT_RESTART` |
 | `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | how finely a pause is cut, that is how fast the pool notices a signal |
-| `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `1000` | automatic coroutine switching; `0` — off |
+| `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `0` | automatic coroutine switching; `0` — off |
 | `SCONCUR_TASKS_REPORT_TICKS` | `true` | show the ticks in the panel's `consumers` section |
 | `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_SECONDS` | `20` | how long to wait for the running ticks before the group is unwound |
 | `SCONCUR_TASKS_SHUTDOWN_TIMEOUT_MS` | `30000` | how long the master waits for the pool's worker; must exceed the previous one |
