@@ -9,8 +9,8 @@ namespace Demo\App\Support;
  *
  * The numbers live in a file rather than in ENV because they have to be readable by a
  * process that did not exist when they were set: `demo/config/sconcur.php` reads them
- * while it builds the master config, and the process doing that is a fresh artisan the
- * master's reload spawns. A file is what both ends can see.
+ * while it builds the master config, and the process doing that is the fresh master
+ * supervisor starts once the old one has stopped. A file is what both ends can see.
  *
  * Everything is clamped on the way in and on the way out. The file is written by an HTTP
  * request and read by the master's own config — a hand-edited number that makes the
@@ -98,19 +98,17 @@ class ScalingSettings
     }
 
     /**
-     * Asks for the named groups to be rolled onto the stored numbers.
+     * Asks for the master to be restarted onto the stored numbers, naming the groups
+     * whose numbers moved.
      *
-     * A request rather than the reload itself, because reload waits for the roll to
-     * finish and the caller is an HTTP worker the roll is going to take down. The
-     * server drains gracefully, so an ordinary request would survive — but this one
-     * would still be inside reload() when its own turn came, and then the server is
-     * waiting for the handler while the handler waits for the master. That standoff
-     * ends at shutdownTimeoutMs with the worker killed and the request cut. The task
-     * pool applies it instead: its group is never one of the rolled ones.
+     * A request rather than the stop itself, because the caller is an HTTP worker the
+     * stop is going to take down: it would be stopping its own master from inside a
+     * request that master is draining. The task pool applies it instead, on its next
+     * tick, and does not wait for the master it stops.
      *
      * @param list<string> $groups
      */
-    public static function requestReload(array $groups): void
+    public static function requestRestart(array $groups): void
     {
         if ($groups === []) {
             return;
@@ -123,11 +121,11 @@ class ScalingSettings
     }
 
     /**
-     * Takes the pending request and clears it, so one request rolls the groups once.
+     * Takes the pending request and clears it, so one request restarts the master once.
      *
      * @return list<string>
      */
-    public static function takeReloadRequest(): array
+    public static function takeRestartRequest(): array
     {
         $path = self::requestPath();
 

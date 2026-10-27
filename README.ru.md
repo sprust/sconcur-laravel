@@ -62,13 +62,15 @@ Coroutine-scoped модель (`AsyncApplication` плюс состояние н
 
 ## Артизан-команды
 
-Мастер инстанцируется прямо в командах из `config('sconcur.master')`
-(через `MasterConfig::fromArray`), без прокидывания JSON-пути.
+`sconcur:servers:master:start` строит `WorkerMaster` библиотеки прямо из
+`config('sconcur.master')` в своём процессе, после загрузки приложения. Каждый воркер —
+fork этого процесса: он стартует с уже загруженным приложением и выполняет роль своей
+группы — HTTP-сервер, пул консьюмеров очереди, WebSocket-сервер или пул задач. `stop` и
+`status` находят запущенный мастер через `MasterControl` по его `runtimeDir` и `name`.
 
 ```
-sconcur:servers:master:start|stop                 # MasterRunner (supervisor, спавнит воркеры)
+sconcur:servers:master:start|stop                 # супервизор: строит мастер, форкает воркеры
 sconcur:servers:master:status [--group=NAME]      # статус: все пулы или один
-sconcur:servers:master:reload [--group=NAME]      # rolling restart: все пулы или один
 sconcur:servers:http:start                        # один HTTP-сервер в foreground (build + serve)
 sconcur:servers:rabbitmq:start                    # пул консьюмеров очереди в foreground
 sconcur:rabbitmq:declare                          # объявить очереди, которые читает пул — обязательна
@@ -80,17 +82,13 @@ sconcur:extension:load                            # скачать .so (запу
 sconcur:extension:status                          # статус расширения (in-process)
 ```
 
-`reload` — единственная команда, которой нужен файл: мастер перечитывает конфиг с диска
-в своём процессе, поэтому in-memory объект до него не доходит. `masterConfigPath()`
-сериализует тот же самый массив в `{runtimeDir}/{name}.config.json` и отдаёт путь —
-так файл, из которого мастер перезагружается, и конфиг, которым его супервизят,
-не расходятся.
+Reload нет: мастер держит загруженное им приложение, поэтому новый код или новый конфиг —
+это новый мастер: `master:stop`, и супервизор процессов запускает его заново.
 
-Мастер спавнит воркеры как `php artisan sconcur:servers:http:start --masterPid=N`
-(`workerScript=artisan`, `workerArgs=[команда]`). Тот же `http:start` запускается и
-standalone. Обработчик coroutine-safe (per-fiber контекст), запросы внутри процесса
-обрабатываются конкурентно; для прод-многопроцессного режима — `master:start`
-(плюс `reusePort`).
+Команды `*:start` четырёх сред запускают одну из них в foreground без мастера — с флагами
+из блока `server` своей группы, если своих не передано. Обработчик coroutine-safe
+(per-fiber контекст), запросы внутри процесса обрабатываются конкурентно; для
+прод-многопроцессного режима — `master:start`.
 
 ## Демо-приложение
 

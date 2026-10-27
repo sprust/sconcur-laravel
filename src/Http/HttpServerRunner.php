@@ -14,15 +14,13 @@ use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
 use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
 
 /**
- * Builds a SConcur HttpServer from the flags its command collected and serves the
- * Laravel HTTP handler in the current process.
+ * Builds a SConcur HttpServer from the group's `server` block and serves the Laravel HTTP
+ * handler in the current process.
  *
- * The flags are the group's `server` block: the master forwards it to the worker's argv,
- * and HttpStartCommand falls back to the same block from config for a standalone run.
- *
- * When launched by the master, $masterPid is the master's pid (injected via the
- * --masterPid argv flag) so the worker self-terminates if the master dies; null
- * for a standalone foreground run.
+ * The flags come from the `http` group: its role hands them over in a worker the master
+ * forked, and HttpStartCommand takes them from its own options or, without any, from the
+ * same block for a standalone run. Under a master the server finds the master's pid by
+ * itself (WorkerContext) and stands down once the master is gone.
  */
 readonly class HttpServerRunner
 {
@@ -31,7 +29,6 @@ readonly class HttpServerRunner
      */
     public function __construct(
         private array $serverArgs = [],
-        private ?int $masterPid = null,
     ) {
     }
 
@@ -61,14 +58,8 @@ readonly class HttpServerRunner
         ServerRequestFactory $serverRequestFactory,
         ResponseFactory $responseFactory,
     ): HttpServer {
-        $argv = $this->serverArgs;
-
-        if ($this->masterPid !== null) {
-            $argv[] = '--masterPid=' . $this->masterPid;
-        }
-
         return HttpServer::fromArgs(
-            argv: $argv,
+            argv: $this->serverArgs,
             serverRequestFactory: $serverRequestFactory,
             responseFactory: $responseFactory,
         );

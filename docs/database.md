@@ -153,16 +153,6 @@ there.
 - `selectResultSets()` is not supported: the feature returns one result set per query.
 - Rows always arrive as `stdClass` — that is Laravel's default `fetchMode`, and the
   connection does not let it be changed anyway.
-- **Column order within a row is not guaranteed.** PDO returns them in `SELECT` order;
-  here a row crosses the PHP↔extension boundary as a msgpack map, and a map does not
-  preserve key order — so two identical queries in a row give different field orders.
-  Reading by name
-  works as usual, so the ORM, `->id`, `->toArray()` and `where` never notice. What does
-  notice is whatever relies on the order: `array_values($row)`, destructuring
-  `[$a, $b] = array_values(...)`, `fputcsv` of a row as-is, comparing two rows with `==`
-  on arrays, and `json_encode` of an API response — the JSON keys will shuffle from one
-  request to the next. If the order matters, set it yourself: list the fields when
-  building the response rather than handing over the whole row.
 - Read/write splitting (`read`/`write`/`sticky`) is not supported — the feature has one
   DSN.
 - `pretend()` keeps its flag in the shared object: it must not be used in a coroutine

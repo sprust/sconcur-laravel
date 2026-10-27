@@ -5,32 +5,28 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Console;
 
 use Illuminate\Console\Command;
-use Illuminate\Queue\WorkerOptions;
 use SConcur\Features\Amqp\Consumer\QueueConsumer;
 use SConcur\Laravel\Queue\Rabbitmq\ConsumerRunner;
+use SConcur\Laravel\Servers\MasterGroups;
+use SConcur\Laravel\Servers\ServerFlags;
+use SConcur\Laravel\Servers\WorkerRoleEnum;
 
 /**
- * Run a queue-consumer pool in the foreground: the worker script of a master group
- * (workerScript = artisan, workerArgs = [this command]), and a standalone consumer in
- * development.
+ * Run a queue-consumer pool in the foreground, outside the master: a standalone consumer
+ * in development. Under the master a worker of the `rabbitmq` group runs ConsumerRunner
+ * itself, without this command.
  *
- * The consumer settings come from argv, which is how the master configures its
- * workers: a group's `server` block is forwarded to their argv verbatim. Symfony
- * Console rejects flags a command does not declare, so every one of them is declared
- * below even though QueueConsumer::fromArgs is what actually reads them.
+ * Every flag QueueConsumer::fromArgs reads is declared below, beside three of this
+ * command's own. The raw argv cannot simply be handed over: fromArgs refuses an argument
+ * it does not know, and --connection, --tries and --backoff are ours rather than the
+ * runtime's. So the runtime's flags are rebuilt from the parsed options and the rest is
+ * kept on this side.
  *
- * The two sets are not the same, though, and the raw argv cannot simply be handed
- * over: fromArgs refuses an argument it does not know, and --connection, --tries and
- * --backoff are ours rather than the runtime's. So the runtime's flags are rebuilt
- * from the parsed options and the rest is kept on this side.
- *
- * Run standalone there is no master to forward anything, so the flags are taken from the
- * group's own `server` block instead — the same values, by the same path the master
- * would have used.
+ * With none of the runtime's flags given, they are taken from the `rabbitmq` group's own
+ * `server` block instead — the values a worker of the master would have used.
  */
 class RabbitmqConsumerStartCommand extends Command
 {
-    /** Artisan name, used by the master when it spawns this group's workers. */
     public const string NAME = 'sconcur:servers:rabbitmq:start';
 
     /** Options that belong to QueueConsumer rather than to this command. */
@@ -43,7 +39,6 @@ class RabbitmqConsumerStartCommand extends Command
         'maxRuntimeSeconds',
         'maxMemoryBytes',
         'preemptionQuantumMs',
-        'masterPid',
     ];
 
     protected $signature = self::NAME . '
@@ -57,20 +52,20 @@ class RabbitmqConsumerStartCommand extends Command
         {--preemptionQuantumMs= : Preemption quantum while consuming}
         {--connection= : The config/queue.php connection to run jobs on}
         {--tries= : Attempts before a job is marked failed}
-        {--backoff= : Seconds to wait before a released job is retried}
-        {--masterPid= : Master pid, injected by the supervisor for orphan self-termination}';
+        {--backoff= : Seconds to wait before a released job is retried}';
 
     protected $description = 'Run a SConcur AMQP queue-consumer pool in the foreground';
 
     public function handle(): int
     {
-        $connection = $this->stringOption('connection')
-            ?? (string) config('sconcur.queue.rabbitmq.connection', 'sconcur_rabbitmq');
+        $tries   = $this->stringOption('tries');
+        $backoff = $this->stringOption('backoff');
 
-        new ConsumerRunner(
+        ConsumerRunner::configured(
             consumer: QueueConsumer::fromArgs($this->consumerArgs()),
-            connectionName: $connection,
-            options: $this->workerOptions(),
+            connectionName: $this->stringOption('connection'),
+            tries: $tries !== null ? (int) $tries : null,
+            backoff: $backoff !== null ? (int) $backoff : null,
         )->run($this->getLaravel());
 
         return self::SUCCESS;
@@ -101,63 +96,14 @@ class RabbitmqConsumerStartCommand extends Command
     }
 
     /**
-     * The `server` block of the group this command is the worker script of, for a run
-     * with no master to forward it.
-     *
-     * The group is found by what it runs rather than by name, so renaming it in the
-     * config does not quietly leave a standalone consumer on library defaults. Anything
-     * structured — the queue list — travels as JSON, exactly as the master encodes it.
+     * The `server` block of the `rabbitmq` group, for a run with none of the runtime's
+     * flags. Anything structured — the queue list — travels as JSON.
      *
      * @return list<string>
      */
     protected function configuredServerArgs(): array
     {
-        $args = [];
-
-        foreach ((array) config('sconcur.master.groups', []) as $group) {
-            if (!is_array($group) || !in_array(self::NAME, (array) ($group['workerArgs'] ?? []), true)) {
-                continue;
-            }
-
-            foreach ((array) ($group['server'] ?? []) as $key => $value) {
-                $args[] = sprintf('--%s=%s', $key, static::flagValue($value));
-            }
-
-            break;
-        }
-
-        return $args;
-    }
-
-    protected static function flagValue(mixed $value): string
-    {
-        if (is_bool($value)) {
-            return $value ? '1' : '0';
-        }
-
-        if (is_scalar($value)) {
-            return (string) $value;
-        }
-
-        return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    }
-
-    /**
-     * What Worker::process() reads. `timeout` is deliberately left at zero: the deadline
-     * on a job belongs to the consumer runtime's handlerTimeoutMs, which unwinds the
-     * coroutine, rather than to the worker's SIGALRM, which would take the process down
-     * with every other handler running in it.
-     */
-    protected function workerOptions(): WorkerOptions
-    {
-        $config = (array) config('sconcur.queue.rabbitmq', []);
-
-        return new WorkerOptions(
-            backoff: (int) ($this->stringOption('backoff') ?? $config['backoff'] ?? 0),
-            memory: (int) ($config['memory_mb'] ?? 128),
-            timeout: 0,
-            maxTries: (int) ($this->stringOption('tries') ?? $config['tries'] ?? 1),
-        );
+        return ServerFlags::fromBlock(MasterGroups::server(WorkerRoleEnum::Rabbitmq));
     }
 
     protected function stringOption(string $name): ?string

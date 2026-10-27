@@ -7,15 +7,18 @@ namespace SConcur\Laravel\Ws;
 use Illuminate\Contracts\Foundation\Application;
 use SConcur\Features\WsServer\Dto\Connection;
 use SConcur\Features\WsServer\WsServer;
+use SConcur\Laravel\Servers\MasterGroups;
+use SConcur\Laravel\Servers\WorkerRoleEnum;
 use SConcur\Laravel\Ws\Bus\BusSubscriber;
 use Throwable;
 
 /**
- * Builds a SConcur WsServer from the flags its command collected and serves the protocol
+ * Builds a SConcur WsServer from the group's `server` block and serves the protocol
  * handler in the current process — the ws counterpart of HttpServerRunner.
  *
- * The flags are the group's `server` block: the master forwards it to the worker's argv,
- * and WsStartCommand falls back to the same block from config for a standalone run.
+ * The flags come from the `ws` group: its role hands them over in a worker the master
+ * forked, and WsStartCommand takes them from its own options or, without any, from the
+ * same block for a standalone run.
  */
 readonly class WsServerRunner
 {
@@ -24,7 +27,6 @@ readonly class WsServerRunner
      */
     public function __construct(
         private array $serverArgs = [],
-        private ?int $masterPid = null,
     ) {
     }
 
@@ -40,6 +42,11 @@ readonly class WsServerRunner
         $logger = $app->make(WsLogger::class);
 
         $this->warnAboutHandlerTimeout($logger);
+        $this->warnAboutPresenceStore(
+            logger: $logger,
+            options: $app->make(WsOptions::class),
+            workerCount: MasterGroups::workerCount(WorkerRoleEnum::Ws),
+        );
 
         // A bus with no loop of its own is subscribed here, before serving starts; the
         // one that needs a coroutine is started by the first connection instead.
@@ -50,14 +57,8 @@ readonly class WsServerRunner
 
     protected function makeServer(WsLogger $logger): WsServer
     {
-        $argv = $this->serverArgs;
-
-        if ($this->masterPid !== null) {
-            $argv[] = '--masterPid=' . $this->masterPid;
-        }
-
         return WsServer::fromArgs(
-            argv: $argv,
+            argv: $this->serverArgs,
             onError: static function (Throwable $exception, Connection $connection) use ($logger): void {
                 $logger->log('conn', 'connection ' . $connection->id . ' failed: ' . $exception->getMessage());
             },
@@ -89,5 +90,31 @@ readonly class WsServerRunner
 
             return;
         }
+    }
+
+    /**
+     * A member list kept in one process is correct only while there is one process. Under
+     * a pool it is not incomplete, it is wrong — every worker would answer with its own
+     * subscribers — so the mismatch is said in the worker's log rather than honoured in
+     * silence.
+     */
+    protected function warnAboutPresenceStore(WsLogger $logger, WsOptions $options, int $workerCount): void
+    {
+        if ($workerCount <= 1) {
+            return;
+        }
+
+        if ($options->presence->resolveStore($workerCount) !== WsPresenceOptions::STORE_MEMORY) {
+            return;
+        }
+
+        $logger->log(
+            'server',
+            sprintf(
+                'sconcur.ws.presence.store is "memory" with %d ws workers: each of them will answer'
+                . ' presence subscriptions with its own connections only. Use "cache" or "auto".',
+                $workerCount,
+            ),
+        );
     }
 }

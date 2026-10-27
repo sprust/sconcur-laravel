@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use SConcur\Laravel\Servers\Events\WorkerForked;
 use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 
 // Published into the application (`vendor:publish --tag=sconcur-laravel`) and read from
@@ -53,11 +54,20 @@ return [
     | event class => a list of its listeners, the way EventServiceProvider::$listen
     | takes them.
     |
+    | WorkerForked is raised in every worker the master forks, right after the fork
+    | and before the worker builds its server, consumer or task pool: the place for
+    | per-worker setup. An exception a listener lets out ends the worker. A closure
+    | works as well, through Event::listen() in a service provider.
+    |
     | WorkerWatchdogTriggered is raised in the master process when its watchdog
     | kills a worker whose PHP thread stopped answering. It runs inside the
-    | master's supervision tick, so a listener has to be short.
+    | master's supervision tick, so a listener has to be short, and it must make no
+    | asynchronous call: the master's process refuses one.
     */
     'listeners' => [
+        WorkerForked::class => [
+            // App\Listeners\PrepareWorker::class,
+        ],
         WorkerWatchdogTriggered::class => [
             // App\Listeners\ReportWorkerWatchdog::class,
         ],
@@ -67,19 +77,25 @@ return [
     |--------------------------------------------------------------------------
     | Master config
     |--------------------------------------------------------------------------
-    | Full mirror of vendor/sconcur/sconcur/config/sconcur.servers.config.json.
-    | Keys are kept verbatim (camelCase) so this array can be serialized straight
-    | into the JSON master config consumed by bin/sconcur-server (MasterCli).
-    | Values are env-driven with project defaults (cf. servers/sconcur/...).
+    | The SConcur worker master: `sconcur:servers:master:start` builds the library's
+    | WorkerMaster out of this array in its own process, after the application has
+    | booted, and every worker is a fork of that process — it starts with the
+    | application already in memory. Keys are kept verbatim (camelCase), as the library
+    | names its parameters.
     |
-    | The top level is what belongs to the master as a whole; the pools it
-    | supervises are the `groups` list (SConcur 0.11 moved workerScript,
-    | workerCount, workerArgs and server there — one master now runs several
-    | unlike pools under one lock and one journal).
+    | The top level is what belongs to the master as a whole, followed by the settings
+    | every group falls back on: restartPolicy, shutdownTimeoutMs, restartBackoffMs,
+    | maxRestartBackoffMs, watchdogTimeoutMs, readyTimeoutMs and accessLog. A group may
+    | set any of them for itself, as the tasks group below does. `env` adds up instead:
+    | what a group lists goes on top of the master-wide list, and a group's value wins. The pools are the
+    | `groups` list; a group's `role` says which runtime its workers run (http,
+    | rabbitmq, ws, tasks).
+    |
+    | There is no reload: a master holds the application it loaded, so new code or a new
+    | config is a new master — `sconcur:servers:master:stop`, and the process supervisor
+    | starts it again.
     */
     'master' => [
-        'phpBinary'           => env('SCONCUR_HTTP_PHP_BINARY', 'php'),
-        'phpArgs'             => [],
         'panelPort'           => (int) env('SCONCUR_HTTP_PANEL_PORT', 28081),
         'adminToken'          => env('SCONCUR_HTTP_ADMIN_TOKEN', ''),
         'runtimeDir'          => storage_path('sconcur/runtime'),
@@ -92,30 +108,32 @@ return [
         'restartBackoffMs'    => (int) env('SCONCUR_HTTP_RESTART_BACKOFF_MS', 200),
         'maxRestartBackoffMs' => (int) env('SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS', 30000),
         'watchdogTimeoutMs'   => (int) env('SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS', 60000),
+        // A worker that dies before it says it is up, and within this long, failed to
+        // start; when every slot of a group fails that way the master stops with code 70.
+        'readyTimeoutMs'      => (int) env('SCONCUR_HTTP_READY_TIMEOUT_MS', 30000),
+        // Where the workers write their access lines: `file`, each worker to a daily file
+        // in logDir (<name>-access-YYYY-MM-DD.log), rotated with the journal; `stdout`,
+        // into the master's journal, which reads every worker's pipe in one process and
+        // under heavy load drops lines; `off`.
+        'accessLog'           => env('SCONCUR_HTTP_ACCESS_LOG', 'file'),
+        // Environment variables every worker gets on top of the master's, set in the
+        // worker right after its fork; a group adds its own the same way.
+        'env'                 => [],
 
         // array_values, and not for tidiness: array_filter preserves keys, so dropping
         // the conditional rabbitmq group out of the middle leaves [0 => http, 2 => tasks]
-        // — and MasterConfig::parseGroups refuses anything that is not a list. Without
-        // this, SCONCUR_RABBITMQ_WORKER_COUNT=0 — the documented way to turn the consumer
-        // pool off — stops the master from starting at all, HTTP and tasks included.
+        // — and WorkerMaster takes its groups as a list. The group list stays a list
+        // either way.
         'groups' => array_values(array_filter([
             [
-                // The master spawns workers as: phpBinary phpArgs workerScript workerArgs --masterPid=N
-                // i.e. `php artisan sconcur:servers:http:start --masterPid=N`.
-                'name'         => 'http',
-                'workerScript' => base_path('artisan'),
-                // Two, not one, so that a rolling reload has somewhere to send traffic:
-                // reload takes a slot down and only then starts its replacement, and
-                // SO_REUSEPORT hands new connections to the workers still listening. A
-                // single worker leaves nobody listening for the ~100 ms that takes, and
-                // whoever knocks in that window gets a refused connection.
-                'workerCount'  => (int) env('SCONCUR_HTTP_WORKER_COUNT', 2),
-                'workerArgs'   => ['sconcur:servers:http:start'],
-                // Forwarded to the worker's argv verbatim, which is where
-                // HttpServer::fromArgs reads it back.
-                'server'       => [
+                'name'        => 'http',
+                'role'        => 'http',
+                'workerCount' => (int) env('SCONCUR_HTTP_WORKER_COUNT', 2),
+                // Added to the master-wide `env` above, for this group's workers only.
+                'env'         => [],
+                // The settings of the HttpServer each worker builds.
+                'server'      => [
                     'address'             => env('SCONCUR_HTTP_ADDRESS', '0.0.0.0:28080'),
-                    'reusePort'           => (bool) env('SCONCUR_HTTP_REUSE_PORT', true),
                     'maxRequests'         => (int) env('SCONCUR_HTTP_MAX_REQUESTS', 0),
                     'maxConcurrency'      => (int) env('SCONCUR_HTTP_MAX_CONCURRENCY', 0),
                     'maxRequestBody'      => (int) env('SCONCUR_HTTP_MAX_REQUEST_BODY', 10485760),
@@ -129,24 +147,21 @@ return [
             ],
 
             /*
-            | The queue-consumer pool. Its `server` block travels the same way the http
-            | group's does: forwarded to the worker's argv verbatim, read back by
-            | QueueConsumer::fromArgs, with the command declaring those flags so artisan
-            | accepts them.
+            | The queue-consumer pool. Its `server` block is the settings of the
+            | QueueConsumer each worker builds.
             |
             | Off unless asked for: a worker count below one leaves the group out of the
             | master config entirely. Setting workerCount to 0 would not do it — to the
             | master that means one worker per CPU, not none.
             */
             (int) env('SCONCUR_RABBITMQ_WORKER_COUNT', 0) < 1 ? null : [
-                'name'         => 'rabbitmq',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => (int) env('SCONCUR_RABBITMQ_WORKER_COUNT'),
-                'workerArgs'   => ['sconcur:servers:rabbitmq:start'],
-                'server'       => [
+                'name'        => 'rabbitmq',
+                'role'        => 'rabbitmq',
+                'workerCount' => (int) env('SCONCUR_RABBITMQ_WORKER_COUNT'),
+                'server'      => [
                     // Queues and their weights: how many consumers each gets, every
                     // one on its own channel. A handler still runs in its own coroutine
-                    // per message. The master JSON-encodes it on the way to argv.
+                    // per message.
                     'queues'           => [
                         [
                             'name'           => env('SCONCUR_RABBITMQ_QUEUE', 'default'),
@@ -170,21 +185,18 @@ return [
                 ],
             ],
             /*
-            | The WebSocket pool. Its `server` block travels the way the others do:
-            | forwarded to the worker's argv verbatim, read back by WsServer::fromArgs,
-            | with WsStartCommand declaring those flags so artisan accepts them.
+            | The WebSocket pool. Its `server` block is the settings of the WsServer
+            | each worker builds.
             |
             | Off unless asked for, like the consumer pool: a worker count below one leaves
             | the group out of the master config entirely.
             */
             (int) env('SCONCUR_WS_WORKER_COUNT', 0) < 1 ? null : [
-                'name'         => 'ws',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => (int) env('SCONCUR_WS_WORKER_COUNT'),
-                'workerArgs'   => ['sconcur:servers:ws:start'],
-                'server'       => [
+                'name'        => 'ws',
+                'role'        => 'ws',
+                'workerCount' => (int) env('SCONCUR_WS_WORKER_COUNT'),
+                'server'      => [
                     'address'   => env('SCONCUR_WS_ADDRESS', '0.0.0.0:28090'),
-                    'reusePort' => (bool) env('SCONCUR_WS_REUSE_PORT', true),
 
                     // The exact path clients upgrade on, key included: the comparison
                     // ignores the query string, so Echo's /app/{key}?protocol=7 matches and
@@ -229,18 +241,16 @@ return [
             | the cron twice a minute, and workerCount 0 does not mean none — to the
             | master it means one worker per CPU.
             |
-            | No `server` block: the pool reads nothing from argv but the master's pid,
-            | which the master appends by itself.
+            | No `server` block: the pool's settings are the `tasks` section further down.
             |
             | Unlike the pools above, it reports to the panel from PHP rather than from the
             | extension's own runtime, because it runs no such runtime — see
             | TaskPoolTelemetry and the `tasks` section further down.
             */
             [
-                'name'         => 'tasks',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => 1,
-                'workerArgs'   => ['sconcur:tasks:start'],
+                'name'        => 'tasks',
+                'role'        => 'tasks',
+                'workerCount' => 1,
                 // Not the master's `always`: this pool is meant to be stoppable.
                 // `sconcur:tasks:stop` drains the tasks and exits 0, and under `always`
                 // the master would put a fresh pool up within the second — a stop that
@@ -251,7 +261,7 @@ return [
                 // Must exceed the pool's own shutdown deadline (20 s), or the master
                 // kills it before the graceful stop can finish; and supervisor's
                 // stopwaitsecs for the master (40 s) must in turn exceed this. There is
-                // no supervisor program for the pool itself — the master spawns it.
+                // no supervisor program for the pool itself — the master forks it.
                 'shutdownTimeoutMs' => (int) env('SCONCUR_TASKS_SHUTDOWN_TIMEOUT_MS', 30000),
             ],
         ])),
@@ -289,7 +299,7 @@ return [
     | WebSocket pool
     |--------------------------------------------------------------------------
     | The protocol side of the `ws` group above; the network side is that group's
-    | `server` block, which travels through argv instead.
+    | `server` block, the settings of the WsServer each worker builds.
     |
     | The wire protocol is a compatible subset of Pusher's, so `laravel-echo` talks to
     | this pool with no client of its own and channel authorization goes through the
@@ -409,7 +419,7 @@ return [
         // How long a stop waits for the running ticks before the group is unwound. Must
         // stay below the master's shutdownTimeoutMs for the tasks group (30 s), or the
         // process is always killed before this can happen and the graceful path never
-        // runs at all. The pool has no supervisor program of its own — the master spawns
+        // runs at all. The pool has no supervisor program of its own — the master forks
         // it — so supervisor's stopwaitsecs (40 s, on the master) only has to exceed that.
         'shutdown_timeout_seconds' => (int) env('SCONCUR_TASKS_SHUTDOWN_TIMEOUT_SECONDS', 20),
 

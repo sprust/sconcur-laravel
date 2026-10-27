@@ -11,9 +11,8 @@ use SConcur\Laravel\Tests\Feature\BaseTestCase;
 class CommandsAreRegisteredTest extends BaseTestCase
 {
     /**
-     * The names are also the contract between the master and its workers: a group's
-     * workerArgs name one of these, so a rename here is a rename in every published
-     * config.
+     * The names are what the docs, the makefile and supervisor configs call, so a rename
+     * here is a rename everywhere they are written down.
      */
     #[Test]
     public function itRegistersEveryCommandTheMasterAndTheDocsName(): void
@@ -24,7 +23,6 @@ class CommandsAreRegisteredTest extends BaseTestCase
             'sconcur:servers:master:start',
             'sconcur:servers:master:stop',
             'sconcur:servers:master:status',
-            'sconcur:servers:master:reload',
             'sconcur:servers:http:start',
             'sconcur:servers:rabbitmq:start',
             'sconcur:rabbitmq:declare',
@@ -40,56 +38,63 @@ class CommandsAreRegisteredTest extends BaseTestCase
     }
 
     /**
-     * The master forwards a group's `server` block to its workers' argv verbatim, and
-     * Symfony Console rejects a flag the command does not declare. So every key the
-     * published config may carry has to be a declared option, or the pool cannot start
-     * at all.
+     * A standalone server takes its flags from the command line, and every key of the
+     * group's `server` block has to be one of them, or that key cannot be overridden from
+     * there.
      */
     #[Test]
-    public function theHttpCommandDeclaresEveryServerFlagTheConfigMayCarry(): void
+    public function theHttpCommandDeclaresEveryServerFlagTheConfigCarries(): void
     {
-        $definition = $this->getApp()->make(Kernel::class)->all()['sconcur:servers:http:start']->getDefinition();
+        $this->assertDeclaresEveryKey('sconcur:servers:http:start', 'http');
+    }
 
-        foreach ([
-            'address',
-            'reusePort',
-            'maxRequests',
-            'maxConcurrency',
-            'maxRequestBody',
-            'readHeaderTimeoutMs',
-            'readTimeoutMs',
-            'writeTimeoutMs',
-            'idleTimeoutMs',
-            'handlerTimeoutMs',
-            'shutdownTimeoutMs',
-            'masterPid',
-        ] as $option) {
+    #[Test]
+    public function theWsCommandDeclaresEveryServerFlagTheConfigCarries(): void
+    {
+        $this->assertDeclaresEveryKey('sconcur:servers:ws:start', 'ws');
+    }
+
+    #[Test]
+    public function theRabbitmqCommandDeclaresEveryServerFlagTheConfigCarries(): void
+    {
+        $this->assertDeclaresEveryKey('sconcur:servers:rabbitmq:start', 'rabbitmq');
+    }
+
+    private function assertDeclaresEveryKey(string $command, string $role): void
+    {
+        $definition = $this->getApp()->make(Kernel::class)->all()[$command]->getDefinition();
+
+        $server = $this->publishedGroup($role)['server'];
+
+        self::assertNotSame([], $server);
+
+        foreach (array_keys($server) as $option) {
             self::assertTrue($definition->hasOption($option), 'missing option: ' . $option);
         }
     }
 
-    #[Test]
-    public function theWsCommandDeclaresEveryServerFlagTheConfigMayCarry(): void
+    /**
+     * The group of the package's own config skeleton, every optional pool switched on.
+     *
+     * @return array<string, mixed>
+     */
+    private function publishedGroup(string $role): array
     {
-        $definition = $this->getApp()->make(Kernel::class)->all()['sconcur:servers:ws:start']->getDefinition();
+        $_SERVER['SCONCUR_RABBITMQ_WORKER_COUNT'] = '1';
+        $_SERVER['SCONCUR_WS_WORKER_COUNT']       = '1';
 
-        foreach ([
-            'address',
-            'reusePort',
-            'path',
-            'handshakeTimeoutMs',
-            'idleTimeoutMs',
-            'writeTimeoutMs',
-            'pingIntervalMs',
-            'maxMessageBytes',
-            'maxConcurrency',
-            'handlerTimeoutMs',
-            'maxConnections',
-            'shutdownTimeoutMs',
-            'preemptionQuantumMs',
-            'masterPid',
-        ] as $option) {
-            self::assertTrue($definition->hasOption($option), 'missing option: ' . $option);
+        try {
+            $config = require __DIR__ . '/../../../config/sconcur.php';
+        } finally {
+            unset($_SERVER['SCONCUR_RABBITMQ_WORKER_COUNT'], $_SERVER['SCONCUR_WS_WORKER_COUNT']);
         }
+
+        foreach ($config['master']['groups'] as $group) {
+            if ($group['role'] === $role) {
+                return $group;
+            }
+        }
+
+        self::fail('no group runs the ' . $role . ' role');
     }
 }

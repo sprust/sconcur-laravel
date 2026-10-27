@@ -6,32 +6,28 @@ namespace SConcur\Laravel\Console;
 
 use Illuminate\Console\Command;
 use SConcur\Laravel\Http\HttpServerRunner;
+use SConcur\Laravel\Servers\MasterGroups;
+use SConcur\Laravel\Servers\ServerFlags;
+use SConcur\Laravel\Servers\WorkerRoleEnum;
 
 /**
- * Run a single SConcur HTTP server in the foreground: the worker script of a master
- * group (workerScript = artisan, workerArgs = [this command]), and a standalone server
- * in development.
+ * Run a single SConcur HTTP server in the foreground, outside the master: a standalone
+ * server in development. Under the master a worker of the `http` group runs
+ * HttpServerRunner itself, without this command.
  *
- * The server settings come from argv, which is how the master configures its workers: a
- * group's `server` block is forwarded to their argv verbatim. Symfony Console rejects
- * flags a command does not declare, so every one of them is declared below even though
- * HttpServer::fromArgs is what reads them.
- *
- * Run standalone there is no master to forward anything, so the flags are taken from the
- * group's own `server` block instead — the same values, by the same path the master
- * would have used.
+ * Every flag HttpServer::fromArgs reads is declared below. With none given, the flags are
+ * taken from the `http` group's own `server` block instead — the values a worker of the
+ * master would have used.
  *
  * For a supervised, multi-worker setup use sconcur:servers:master:start.
  */
 class HttpStartCommand extends Command
 {
-    /** Artisan name, used by the master when it spawns this group's workers. */
     public const string NAME = 'sconcur:servers:http:start';
 
     /** Options that belong to HttpServer rather than to this command. */
     protected const array RUNTIME_OPTIONS = [
         'address',
-        'reusePort',
         'maxRequests',
         'maxConcurrency',
         'maxRequestBody',
@@ -46,7 +42,6 @@ class HttpStartCommand extends Command
 
     protected $signature = self::NAME . '
         {--address= : Listen address, host:port}
-        {--reusePort= : SO_REUSEPORT, so several processes share one port (1/0)}
         {--maxRequests= : Stop after this many requests (0 = unlimited)}
         {--maxConcurrency= : Requests in flight at once (0 = unlimited)}
         {--maxRequestBody= : Request body limit, bytes}
@@ -56,18 +51,14 @@ class HttpStartCommand extends Command
         {--idleTimeoutMs= : Keep-alive idle timeout}
         {--handlerTimeoutMs= : How long one request may spend in the handler}
         {--shutdownTimeoutMs= : Graceful shutdown timeout}
-        {--preemptionQuantumMs= : Preemption quantum while serving}
-        {--masterPid= : Master pid, injected by the supervisor for orphan self-termination}';
+        {--preemptionQuantumMs= : Preemption quantum while serving}';
 
     protected $description = 'Run a SConcur HTTP server in the foreground';
 
     public function handle(): int
     {
-        $masterPid = $this->option('masterPid');
-
         new HttpServerRunner(
             serverArgs: $this->serverArgs(),
-            masterPid: $masterPid !== null ? (int) $masterPid : null,
         )->run($this->getLaravel());
 
         return self::SUCCESS;
@@ -97,34 +88,12 @@ class HttpStartCommand extends Command
     }
 
     /**
-     * The `server` block of the group this command is the worker script of, for a run
-     * with no master to forward it.
-     *
-     * The group is found by what it runs rather than by name, so renaming it in the
-     * config does not quietly leave a standalone server on library defaults.
+     * The `server` block of the `http` group, for a run with no flags of its own.
      *
      * @return list<string>
      */
     protected function configuredServerArgs(): array
     {
-        $args = [];
-
-        foreach ((array) config('sconcur.master.groups', []) as $group) {
-            if (!is_array($group) || !in_array(self::NAME, (array) ($group['workerArgs'] ?? []), true)) {
-                continue;
-            }
-
-            foreach ((array) ($group['server'] ?? []) as $key => $value) {
-                $args[] = sprintf(
-                    '--%s=%s',
-                    $key,
-                    is_bool($value) ? ($value ? '1' : '0') : (string) $value,
-                );
-            }
-
-            break;
-        }
-
-        return $args;
+        return ServerFlags::fromBlock(MasterGroups::server(WorkerRoleEnum::Http));
     }
 }

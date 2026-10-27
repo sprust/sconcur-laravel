@@ -26,15 +26,13 @@ in [websocket.md](websocket.md).
 | Component | Version | What for |
 |---|---|---|
 | PHP | 8.4, NTS | |
-| `ext-msgpack` | 3.0.1 | every payload crossing the PHP↔extension boundary; a hard requirement of `sconcur/sconcur`, enforced by composer |
-| the `sconcur` extension | 0.15.0 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
-| `ext-pcntl` | — | graceful shutdown of the master and of every long-lived worker |
+| the `sconcur` extension | 0.17.0 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
 | MySQL | 8.4 | only for the `sconcur_mysql` connection |
 | RabbitMQ | 4.1 | only for the `sconcur_rabbitmq` queue |
 | Redis | 8.2 | only for the `sconcur` Redis client and the `sconcur_redis` cache store |
 
 The `.so` and the PHP side cross a protocol boundary that changes with the version, so
-`sconcur/sconcur` is pinned exactly (`0.15.0`) rather than with a caret, and the
+`sconcur/sconcur` is pinned exactly (`0.17.0`) rather than with a caret, and the
 extension has to match it exactly: a version that drifted is rejected on load rather
 than working somehow.
 
@@ -66,7 +64,7 @@ php artisan sconcur:extension:status
 The argument is the destination path, and its directory must exist. Without an argument
 the file lands in `base_path('servers/sconcur')`, and the extension then has to be
 enabled with a flag (`php -d extension=servers/sconcur/sconcur.so`): fine for a look,
-not for the workers the master spawns itself.
+not for a master under a process supervisor.
 
 In an image it is one instruction after `composer install`:
 
@@ -282,7 +280,8 @@ limits are in [redis.md](redis.md).
 ## 9. Running it
 
 The master is one process holding every pool — `http`, `rabbitmq`, `ws` and `tasks` — and
-it is what the supervisor starts:
+it is what the supervisor starts. It boots the application and then forks every worker
+from itself, so a worker starts with the application already in memory:
 
 ```ini
 [program:sconcur-master]
@@ -317,8 +316,13 @@ A WebSocket pool needs a second `location` beside this one, with the upgrade hea
 long read timeout — the block above would cut every socket loose once a minute. It is in
 [websocket.md](websocket.md).
 
-New code is rolled out with `sconcur:servers:master:reload`: a rolling restart of the
-workers with the master left up. A single group is updated with `--group=http`.
+New code is a new master. The master holds the application it loaded and every worker it
+forks gets that one, so there is no reload: `sconcur:servers:master:stop` drains the
+workers and stops the master, and the supervisor starts it again on the new release. While
+the new master loads, nobody listens on the port; a proxy in front that retries a refused
+connection covers that. A deploy that replaces files in place without restarting the
+master mixes versions: a worker forked after it gets the old code from the master's memory
+and the new code from disk for a class the master had not loaded yet.
 
 ## 10. Checking it
 
@@ -328,8 +332,7 @@ php artisan sconcur:servers:master:status   # running: pid=… workers=… group
 curl -i http://localhost/                   # answered by a SConcur worker already
 ```
 
-`sconcur:servers:master:status` prints one line per group: how many workers it has up and
-on what script. An empty group list means the config is not published or its `groups` is
+`sconcur:servers:master:status` prints one line per group: how many workers it keeps up. An empty group list means the config is not published or its `groups` is
 empty; the `rabbitmq` group is absent whenever `SCONCUR_RABBITMQ_WORKER_COUNT` is below
 one — that is the supported way to turn it off.
 

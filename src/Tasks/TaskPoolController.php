@@ -8,15 +8,17 @@ use SConcur\Laravel\Tasks\Control\ControlActionEnum;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
 use SConcur\Laravel\Support\ProcessMemory;
 use SConcur\Laravel\Tasks\Control\ControlCommandDto;
+use SConcur\Process\ProcessControl;
+use SConcur\Scheduler\Scheduler;
 use SConcur\WaitGroup;
 
 /**
  * The coroutine that watches for a reason to stop and then sees the stop through.
  *
  * It is a member of the same group as the tasks and does no work of its own, which is
- * the point: something has to execute PHP on a regular tick for a pending signal handler
- * to run at all, and something has to poll the control channel. A pool whose tasks were
- * all parked in the extension would notice neither.
+ * the point: something has to execute PHP on a regular tick to take the signals the
+ * extension recorded, and to poll the control channel. A pool whose tasks were all parked
+ * in the extension would notice neither.
  *
  * It never touches a task's coroutine — nothing can. It writes to the shared state, and
  * each task's loop reads it between ticks. The one forcible tool is unwinding the whole
@@ -24,7 +26,7 @@ use SConcur\WaitGroup;
  */
 class TaskPoolController
 {
-    /** Raised by the signal handler, read on the next tick. */
+    /** A signal taken or handed over, acted on by the next pass. */
     protected bool $signalled = false;
 
     /** Handled commands are never replayed; this is the floor for the next one. */
@@ -67,7 +69,10 @@ class TaskPoolController
         return $this->restartWanted;
     }
 
-    /** Called from the signal handler, so it does the least it can get away with. */
+    /**
+     * Records a signal for the next pass to act on, as one the extension recorded is: the
+     * same path, for a caller that has a signal of its own to hand over.
+     */
     public function signalled(): void
     {
         $this->signalled = true;
@@ -88,6 +93,11 @@ class TaskPoolController
             // whether a snapshot is due.
             $this->telemetry?->push();
 
+            // The pool is a loop of its own rather than a library server, so it tells its
+            // master that it is up itself. Only the first call says anything, and outside
+            // a worker the master forked it does nothing.
+            Scheduler::get()->markReady();
+
             if ($this->finished($group)) {
                 return;
             }
@@ -98,6 +108,13 @@ class TaskPoolController
 
     protected function readSignal(): void
     {
+        // The signals TaskPool watches, recorded by the extension since the last pass.
+        // Several of the same kind between two passes arrive as one, as they would have
+        // through a handler that only raises a flag.
+        if (ProcessControl::takeSignals() !== []) {
+            $this->signalled = true;
+        }
+
         if (!$this->signalled) {
             return;
         }
@@ -217,7 +234,7 @@ class TaskPoolController
      * Stands down when the master that spawned this pool is gone.
      *
      * Compared by parent pid rather than by signalling the master's own: the kernel
-     * reparents an orphan, so getppid() stops matching and stays that way, which a pid
+     * reparents an orphan, so the parent pid stops matching and stays that way, which a pid
      * that has since been reused would not. The library's servers check the same way.
      */
     protected function checkMaster(): void
@@ -226,7 +243,7 @@ class TaskPoolController
             return;
         }
 
-        if (!function_exists('posix_getppid') || posix_getppid() === $this->masterPid) {
+        if (ProcessControl::parentPid() === $this->masterPid) {
             return;
         }
 

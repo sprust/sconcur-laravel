@@ -183,7 +183,7 @@ lock and no TTL to refresh.
 ## Stopping
 
 Every reason leads down one path: the controller takes the tasks off the tick, waits for
-the running ticks to finish, and exits. The reasons are `SIGTERM`/`SIGINT`/`SIGQUIT`, the
+the running ticks to finish, and exits. The reasons are `SIGTERM`/`SIGINT`, the
 `sconcur:tasks:stop` command, and going past `memory_mb`.
 
 `memory_mb` is compared against the larger of two figures: the PHP heap
@@ -199,8 +199,8 @@ not available the heap decides alone. The log line names the figure that crossed
 The exit code tells them apart, and that is not a detail. `sconcur:tasks:stop`, a signal
 to a pool running without a master and the master going away exit with zero; `memory_mb`
 and a signal under a master exit with `TaskPool::EXIT_RESTART` (75). The master's own
-stop, reload and group removal send `SIGTERM` as well, but the master reads no exit code
-of a worker it drains or rolls, so there the 75 changes nothing. Where it is read, the
+stop sends `SIGTERM` as well, but the master reads no exit code of a worker it drains, so
+there the 75 changes nothing. Where it is read, the
 signal is the master's watchdog or an operator's `kill`, and both want the pool back. The
 `tasks` group declares `restartPolicy: on-failure`, so the master brings a new process up
 after a 75 and leaves things alone after a zero. Under a master, then, `kill` restarts the
@@ -210,10 +210,12 @@ exactly until the next tick — that is, not stop it at all.
 
 The controller is a member of the group like any other, only without useful work: it wakes
 every `sleep_chunk_ms` and looks at the signal and at the control channel. This is not
-decoration. A `pcntl` handler runs at an opcode boundary, that is only while PHP code is
-executing, and a process whose coroutines are all parked waiting on the extension executes
-nothing — so `SIGTERM` sits undelivered. Hence the pauses are cut into quanta: the
-library's own servers poll at the same interval and for the same reason.
+decoration. The signals are recorded by the extension, the way the library's servers watch
+theirs, with no PHP running inside the handler — and somebody has to come and take them:
+a process whose coroutines are all parked waiting on the extension executes nothing, so
+`SIGTERM` would sit there unread. Hence the pauses are cut into quanta: the library's own
+servers poll at the same interval and for the same reason. Neither `ext-pcntl` nor
+`ext-posix` is needed.
 
 If somebody has not returned within `shutdown_timeout_seconds`, the controller names the
 stuck tasks in the log and unwinds the group through `WaitGroup::stop()`. The whole group
@@ -239,25 +241,28 @@ The pool is designed to be a group of the master, and that is its normal mode:
 
 ```php
 [
-    'name'          => 'tasks',
-    'workerScript'  => base_path('artisan'),
-    'workerCount'   => 1,
-    'workerArgs'    => ['sconcur:tasks:start'],
-    'restartPolicy' => 'on-failure',
+    'name'              => 'tasks',
+    'role'              => 'tasks',
+    'workerCount'       => 1,
+    'restartPolicy'     => 'on-failure',
     'shutdownTimeoutMs' => 30000,
 ],
 ```
+
+A worker of the group is a fork of the master: it runs `TaskPool` itself, without the
+`sconcur:tasks:start` command, and a non-zero exit code of the pool leaves as the worker's.
+Once its loop runs, the pool tells the master it is up (`Scheduler::markReady()`), so a
+pool that dies at startup is told apart from one that works.
 
 `workerCount` is exactly 1, and that is not a formality: `0` means to the master not "none"
 but "one worker per core", and two pools side by side would mean two crons ticking the same
 minute. `flock` guards against a second pool too, but the config should not lean on that.
 
-The master appends `--masterPid` to the argv of any of its workers, so the command declares
-that flag — otherwise Symfony Console rejects an unknown argument. The pool uses it the way
-the library's servers do: on its tick the controller compares `posix_getppid()` with that
-pid and stops normally if the master has died and the kernel has reassigned the parent. The
-comparison is on the parent rather than on "is such a pid alive", because a pid can be
-reused.
+The worker knows the master's pid from the library (`WorkerContext::masterPid`). The pool
+uses it the way the library's servers do: on its tick the controller compares the parent
+pid the extension reports with that pid and stops normally if the master has died and the kernel
+has reassigned the parent. The comparison is on the parent rather than on "is such a pid
+alive", because a pid can be reused.
 
 **The telemetry is the pool's own, in PHP.** The panel is filled by snapshots the
 extension's server and consumer runtimes send once a second; the pool starts neither of
@@ -339,8 +344,8 @@ is the likely case, not a rare one. The full list, with the safe form of each, i
 `vendor/sconcur/sconcur/docs/coroutine-switching.md` (Process-wide state).
 
 The price of `0`: a tick that computes without waiting holds every other coroutine of the
-pool until it returns. That includes the controller, whose tick delivers the signal (a
-`pcntl` handler runs only while PHP code is executing) and polls the control channel, so
+pool until it returns. That includes the controller, whose tick takes the signal the
+extension recorded and polls the control channel, so
 such a tick delays the pool's stop by as long as it computes. A tick that waits through
 SConcur — `sconcur_mysql`, `Sleeper`, the feature's HTTP client — suspends its coroutine and
 holds nobody.

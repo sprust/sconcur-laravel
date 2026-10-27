@@ -41,7 +41,7 @@ make demo-art c=...                   # artisan демо-приложения
 make workers-art c=...                # тот же artisan внутри контейнера воркеров
 make queues-declare                   # объявить очереди, которые читает пул консьюмеров
 make sconcur-status                   # статус мастера: группы и воркеры
-make sconcur-reload                   # rolling restart пулов, мастер остаётся жив
+make sconcur-stop                     # остановить мастер; supervisor запустит новый
 make tasks-stop / make tasks-restart  # управление пулом задач из другого контейнера
 make ws-check c=50                    # ws-пул от начала до конца, с кодом возврата
 make check                            # cs-fixer, phpstan, тесты

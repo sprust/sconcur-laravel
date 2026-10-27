@@ -8,12 +8,13 @@ use Closure;
 use PHPUnit\Framework\Attributes\Test;
 use ReflectionProperty;
 use SConcur\Laravel\Console\MasterStartCommand;
-use SConcur\Laravel\Servers\MasterRunner;
 use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+use SConcur\Laravel\Servers\MasterFactory;
 use SConcur\Laravel\Servers\WatchdogEventForwarder;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
 use SConcur\Worker\WatchdogEvent;
 use SConcur\Worker\WatchdogEventEnum;
+use SConcur\Worker\WorkerMaster;
 use Workbench\App\Listeners\RecordWorkerWatchdog;
 
 /**
@@ -98,15 +99,23 @@ class WatchdogEventForwarderTest extends BaseTestCase
     public function theMasterStartCommandHandsTheForwarderToTheMaster(): void
     {
         $masterStartCommand = new class extends MasterStartCommand {
-            public function runner(WatchdogEventForwarder $watchdogEventForwarder): MasterRunner
-            {
-                return $this->masterRunner($watchdogEventForwarder);
+            public function master(
+                MasterFactory $masterFactory,
+                WatchdogEventForwarder $watchdogEventForwarder,
+            ): WorkerMaster {
+                return $this->workerMaster(
+                    masterFactory: $masterFactory,
+                    watchdogEventForwarder: $watchdogEventForwarder,
+                );
             }
         };
 
-        $masterRunner = $masterStartCommand->runner($this->getApp()->make(WatchdogEventForwarder::class));
+        $workerMaster = $masterStartCommand->master(
+            masterFactory: $this->getApp()->make(MasterFactory::class),
+            watchdogEventForwarder: $this->getApp()->make(WatchdogEventForwarder::class),
+        );
 
-        $onWatchdogEvent = new ReflectionProperty($masterRunner, 'onWatchdogEvent')->getValue($masterRunner);
+        $onWatchdogEvent = new ReflectionProperty($workerMaster, 'onWatchdogEvent')->getValue($workerMaster);
 
         self::assertInstanceOf(Closure::class, $onWatchdogEvent);
 

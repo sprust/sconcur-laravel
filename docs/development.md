@@ -42,7 +42,7 @@ make demo-art c=...                   # artisan of the demo application
 make workers-art c=...                # the same artisan inside the workers container
 make queues-declare                   # declare the queues the consumer pool reads
 make sconcur-status                   # master status: groups and workers
-make sconcur-reload                   # rolling restart of the pools, master stays up
+make sconcur-stop                     # stop the master; supervisor starts a fresh one
 make tasks-stop / make tasks-restart  # driving the task pool from another container
 make ws-check c=50                    # the ws pool end to end, with an exit code
 make check                            # cs-fixer, phpstan, tests

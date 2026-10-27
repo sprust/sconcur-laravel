@@ -8,8 +8,9 @@ What lies where in the repository.
 config/sconcur.php             — the config (panel_host, scoped_services, filesystem, listeners, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider.php — the provider (commands + wiring the adapters into the worker)
 src/Console/                   — artisan commands
-src/Servers/                   — MasterRunner (a wrapper over SConcur\Worker\MasterCli),
-                                 WatchdogEventForwarder, Events/WorkerWatchdogTriggered
+src/Servers/                   — MasterFactory (config → SConcur\Worker\WorkerMaster), WorkerRoles +
+                                 WorkerRoleEnum (what a forked worker runs), MasterGroups, ServerFlags,
+                                 WatchdogEventForwarder, Events/WorkerForked, Events/WorkerWatchdogTriggered
 src/Queue/Rabbitmq/            — the queue driver and the consumer pool (Connector, Queue, Job, ConsumerRunner)
 src/Database/                  — TransactionStore (the transaction nesting level, per coroutine)
 src/Database/Mysql/            — the sconcur_mysql connection (Connector, Connection, Dsn, TransactionStack)

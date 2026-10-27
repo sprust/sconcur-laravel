@@ -180,10 +180,11 @@
             <h2>Pool sizes</h2>
             <p class="muted" style="margin-top:0">
                 How many processes each pool runs, and how many consumers the RabbitMQ
-                queue gets inside each of them. Applying rolls only the groups that
-                changed — the rolling is done by the task pool, the one pool this never
-                touches. Raising <code>ws</code> above one puts two browsers on different
-                workers, which is what the fanout bus is there for; rolling it drops the
+                queue gets inside each of them. Applying restarts the master — the task
+                pool asks it to stop, and supervisor starts a new one with these numbers.
+                Every pool comes up again, and for the moment the new master loads nobody
+                listens. Raising <code>ws</code> above one puts two browsers on different
+                workers, which is what the fanout bus is there for; the restart drops the
                 open sockets, and the page reconnects.
             </p>
             <div class="controls">
@@ -278,8 +279,8 @@
             <p class="muted" style="margin-top:0">
                 A counter the task pool bumps on its own.
                 <code>make tasks-stop</code> freezes it — from another container,
-                through a cache key rather than a pid. <code>make sconcur-reload</code>
-                starts it again.
+                through a cache key rather than a pid. <code>make sconcur-stop</code>
+                starts it again, with a new master.
             </p>
             <pre id="out-heartbeats">—</pre>
         </div>
@@ -300,7 +301,7 @@
 
     const show = (id, data) => { $(id).textContent = JSON.stringify(data, null, 2); };
 
-    // Every answer goes through here, because during a roll the page is talking to a
+    // Every answer goes through here, because during a restart the page is talking to a
     // pool that is being replaced: nginx answers 502 with an HTML error page, and
     // response.json() on that reports a parse error about an unexpected '<' — which
     // tells the reader nothing about what is actually happening.
@@ -310,7 +311,7 @@
         try {
             response = await fetch(url, options);
         } catch (error) {
-            throw new Error('unreachable — the workers may be rolling');
+            throw new Error('unreachable — the workers may be restarting');
         }
 
         const body = await response.text();
@@ -319,7 +320,7 @@
             return JSON.parse(body);
         } catch (error) {
             if (response.status === 502 || response.status === 503 || response.status === 504) {
-                throw new Error(`the workers are rolling (${response.status})`);
+                throw new Error(`the workers are restarting (${response.status})`);
             }
 
             throw new Error(`${response.status} ${response.statusText || 'unexpected answer'}`);
@@ -412,7 +413,7 @@
     };
 
     // A failed poll leaves the last numbers on screen and says so in the status line,
-    // rather than blanking the tables: a roll takes a few seconds, and a page that
+    // rather than blanking the tables: a restart takes a few seconds, and a page that
     // empties itself and fills back up is harder to read than one that holds still and
     // tells you it is waiting.
     const poll = async () => {

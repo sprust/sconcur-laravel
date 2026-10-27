@@ -37,7 +37,6 @@
 SCONCUR_PANEL_HOST=http://127.0.0.1:28081/api/stats
 
 # The master (supervisor)
-SCONCUR_HTTP_PHP_BINARY=php
 SCONCUR_HTTP_PANEL_PORT=28081
 SCONCUR_HTTP_ADMIN_TOKEN=
 SCONCUR_HTTP_NAME=sconcur-http-server
@@ -48,11 +47,12 @@ SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS=10000
 SCONCUR_HTTP_RESTART_BACKOFF_MS=200
 SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS=30000
 SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS=60000
+SCONCUR_HTTP_READY_TIMEOUT_MS=30000
+SCONCUR_HTTP_ACCESS_LOG=file
 
 # The http group and its server
 SCONCUR_HTTP_WORKER_COUNT=2
 SCONCUR_HTTP_ADDRESS=0.0.0.0:28080
-SCONCUR_HTTP_REUSE_PORT=true
 SCONCUR_HTTP_MAX_REQUESTS=0
 SCONCUR_HTTP_MAX_CONCURRENCY=0
 SCONCUR_HTTP_MAX_REQUEST_BODY=10485760
@@ -83,7 +83,6 @@ SCONCUR_RABBITMQ_DSN=amqp://guest:guest@127.0.0.1:5672/%2f
 # The ws group and its server; below 1 worker the group is left out
 SCONCUR_WS_WORKER_COUNT=0
 SCONCUR_WS_ADDRESS=0.0.0.0:28090
-SCONCUR_WS_REUSE_PORT=true
 SCONCUR_WS_HANDSHAKE_TIMEOUT_MS=10000
 SCONCUR_WS_IDLE_TIMEOUT_MS=0
 SCONCUR_WS_WRITE_TIMEOUT_MS=30000
@@ -141,37 +140,73 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 
 | ENV | Дефолт | Назначение |
 |---|---|---|
-| `SCONCUR_HTTP_PHP_BINARY` | `php` | PHP-бинарь для воркеров |
 | `SCONCUR_HTTP_PANEL_PORT` | `28081` | порт телеметрия-панели (0 = выкл) |
 | `SCONCUR_HTTP_ADMIN_TOKEN` | `` (пусто) | Bearer-токен панели (пусто = выкл) |
 | `SCONCUR_HTTP_NAME` | `sconcur-http-server` | имя сервера (lock/state/log файлы) |
 | `SCONCUR_HTTP_ROTATE_DAYS` | `3` | ротация логов, дней |
 | `SCONCUR_HTTP_LOG_TO` | `both` | куда логировать (`file`/`stdout`/`both`) |
-| `SCONCUR_HTTP_RESTART_POLICY` | `always` | политика рестарта воркеров |
+| `SCONCUR_HTTP_RESTART_POLICY` | `always` | политика рестарта воркеров (`always`/`on-failure`/`never`) |
 | `SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS` | `10000` | таймаут graceful-остановки воркера, мс |
 | `SCONCUR_HTTP_RESTART_BACKOFF_MS` | `200` | стартовый backoff рестарта, мс |
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | макс. backoff рестарта, мс |
 | `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS` | `60000` | сколько PHP-поток воркера может не возвращаться в планировщик, прежде чем мастер убьёт и заменит воркер; `0` — выкл, иначе не меньше `5000` |
+| `SCONCUR_HTTP_READY_TIMEOUT_MS` | `30000` | воркер, умерший раньше, чем сообщил, что поднялся, и в пределах этого времени, не стартовал; не меньше `1000` |
+| `SCONCUR_HTTP_ACCESS_LOG` | `file` | куда воркеры пишут строки access-лога: `file` (каждый воркер в `<name>-access-YYYY-MM-DD.log` в `logDir`, удаляется вместе с журналом через `rotateDays`), `stdout` (в журнал мастера; трубы всех воркеров читает один процесс, и под большой нагрузкой строки теряются), `off` |
 
-Не из ENV: `workerScript=base_path('artisan')`, `phpArgs=[]`,
-`runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
+Последние семь — значения по умолчанию для каждой группы: группа может задать любое из
+них сама, как группа `tasks` задаёт `restartPolicy` и `shutdownTimeoutMs`.
+
+Не из ENV: `runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')` и
+`env` — переменные окружения, которые каждый воркер получает поверх окружения мастера; они
+выставляются в воркере сразу после fork (`putenv`, `$_ENV`, `$_SERVER`). Собственный `env`
+группы ложится поверх этого списка, и её значение побеждает:
+
+```php
+'master' => [
+    'env'    => ['LOG_CHANNEL' => 'stderr'],
+    'groups' => [
+        [
+            'name' => 'tasks',
+            'role' => 'tasks',
+            'env'  => ['LOG_CHANNEL' => 'daily'], // tasks workers: LOG_CHANNEL=daily
+        ],
+    ],
+],
+```
+
+Переменную, заданную так, видят `getenv()` в воркере и то, что воркер запускает.
+Конфигурация, которую приложение загрузило в мастере, в воркере заново не читается, поэтому
+вызовы `env()` в `config/*.php` сохраняют значения, которые видел мастер.
 
 ## Группы
 
 Один мастер супервизит несколько непохожих пулов под одним локом и одним журналом,
-поэтому `workerScript`, `workerCount`, `workerArgs` и `server` живут не на верхнем
-уровне конфига, а в элементе списка `groups`.
+поэтому `role`, `workerCount` и `server` живут не на верхнем уровне конфига, а в элементе
+списка `groups`.
 
-Блок `server` группы мастер форвардит в argv её воркеров как есть, поэтому все три
-команды — `http:start`, `rabbitmq:start` и `ws:start` — объявляют эти флаги: artisan
-отвергает то, чего не объявлено. Читают их `HttpServer::fromArgs`,
-`QueueConsumer::fromArgs` и `WsServer::fromArgs`. Всё, что не скаляр (список очередей),
-мастер кодирует в JSON по дороге.
+`sconcur:servers:master:start` строит мастер в своём процессе после загрузки приложения, и
+каждый воркер — fork этого процесса. `role` группы — то, что выполняют её воркеры: `http`,
+`rabbitmq`, `ws` или `tasks`. Блок `server` — настройки сервера или консьюмера, которого
+строит каждый воркер: он превращается во флаги `--name=value`, их читают
+`HttpServer::fromArgs`, `QueueConsumer::fromArgs` и `WsServer::fromArgs`; всё, что не
+скаляр (список очередей), идёт в JSON.
 
-Запуск без мастера форвардить некому, поэтому команда в этом случае берёт тот же блок
-`server` из конфига своей группы. Группа ищется по тому, что она запускает, а не по
-имени, — иначе переименование группы тихо оставило бы standalone-запуск на дефолтах
-библиотеки.
+Команды `http:start`, `rabbitmq:start` и `ws:start` запускают сервер без мастера. Они
+объявляют те же флаги, а если ни одного не передано, берут блок `server` группы своей
+роли. Группа ищется по роли, а не по имени, — иначе переименование группы тихо оставило
+бы standalone-запуск на дефолтах библиотеки.
+
+Каждый сервер биндит адрес с `SO_REUSEPORT`: воркеры группы делят порт, и ядро
+распределяет соединения между ними. Настройки для этого нет.
+
+То, что приложение делает при загрузке, происходит один раз, в процессе мастера, и каждый
+воркер это наследует. Отсюда два следствия. Во время загрузки нельзя делать асинхронных
+вызовов: запрос через `sconcur_mysql` или команда Redis-клиента `sconcur` в
+сервис-провайдере запускают рантайм расширения, а процесс с ним не может форкать — мастер
+откажется стартовать и назовёт причину. И соединение, открытое при загрузке, было бы общим
+для всех воркеров, а не скопированным, поэтому команда запуска закрывает соединения с базой
+и Redis, которые приложение открыло, до fork; каждый воркер открывает свои при первом
+запросе. Настройку на уровне воркера — в слушатель [`WorkerForked`](#workerforked).
 
 `workerCount` меньше единицы — это и есть способ выключить пул: группа не попадает в
 конфиг мастера вовсе. Ноль так не работает: для мастера `workerCount: 0` означает воркер
@@ -190,7 +225,6 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 | ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_HTTP_ADDRESS` | `0.0.0.0:28080` | адрес прослушивания |
-| `SCONCUR_HTTP_REUSE_PORT` | `true` | `SO_REUSEPORT` (несколько процессов на один порт) |
 | `SCONCUR_HTTP_MAX_REQUESTS` | `0` | стоп после N запросов (0 = ∞) |
 | `SCONCUR_HTTP_MAX_CONCURRENCY` | `0` | макс. одновременных запросов (0 = ∞) |
 | `SCONCUR_HTTP_MAX_REQUEST_BODY` | `10485760` | лимит тела запроса, байт |
@@ -239,7 +273,6 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 | ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_WS_ADDRESS` | `0.0.0.0:28090` | адрес прослушивания |
-| `SCONCUR_WS_REUSE_PORT` | `true` | `SO_REUSEPORT` (несколько процессов на одном порту) |
 | `SCONCUR_WS_PATH` | `/app/${SCONCUR_WS_APP_KEY}` | точный путь, на котором принимается Upgrade; пустая строка — любой |
 | `SCONCUR_WS_HANDSHAKE_TIMEOUT_MS` | `10000` | сколько может занять чтение заголовков Upgrade, мс |
 | `SCONCUR_WS_IDLE_TIMEOUT_MS` | `0` | простой между входящими сообщениями (0 — выключено) |
@@ -351,10 +384,15 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 каждом процессе.
 
 ```php
+use App\Listeners\PrepareWorker;
 use App\Listeners\ReportWorkerWatchdog;
+use SConcur\Laravel\Servers\Events\WorkerForked;
 use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 
 'listeners' => [
+    WorkerForked::class => [
+        PrepareWorker::class,
+    ],
     WorkerWatchdogTriggered::class => [
         ReportWorkerWatchdog::class,
     ],
@@ -363,7 +401,48 @@ use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 
 | Событие | Где возникает | Когда |
 |---|---|---|
+| `SConcur\Laravel\Servers\Events\WorkerForked` | воркер мастера | сразу после fork, до того как воркер построит свой сервер, консьюмер или пул задач |
 | `SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered` | процесс мастера | watchdog мастера действует на воркер, чей PHP-поток перестал возвращаться в планировщик |
+
+### `WorkerForked`
+
+Место для того, что нужно сделать один раз на воркер, а не один раз на мастер: каждый
+воркер стартует с копией того, что загрузил процесс мастера, поэтому значение, посчитанное
+при загрузке приложения, — id, метка времени, seed — у всех одинаковое.
+`WorkerForked::$workerContext` — это `SConcur\Worker\WorkerContext` библиотеки: `group`,
+`slot` (с `0`) и `masterPid`.
+
+```php
+namespace App\Listeners;
+
+use Illuminate\Support\Facades\Log;
+use SConcur\Laravel\Servers\Events\WorkerForked;
+
+class PrepareWorker
+{
+    public function handle(WorkerForked $workerForked): void
+    {
+        Log::withContext([
+            'worker' => $workerForked->workerContext->group . '#' . $workerForked->workerContext->slot,
+        ]);
+    }
+}
+```
+
+Подойдёт и замыкание, зарегистрированное в сервис-провайдере:
+
+```php
+Event::listen(static function (WorkerForked $workerForked): void {
+    // ...
+});
+```
+
+Слушатель выполняется в воркере, поэтому асинхронные вызовы в нём допустимы. Он
+выполняется до того, как воркер сообщит, что поднялся: исключение, которое он выпустит,
+завершает воркер, а когда так завершаются все воркеры группы, мастер останавливается с
+кодом `70`.
+
+### `WorkerWatchdogTriggered`
 
 `WorkerWatchdogTriggered::$watchdogEvent` — это `SConcur\Worker\WatchdogEvent` библиотеки:
 `event`, `group`, `slot`, `pid`, `ageSeconds` и `watchdogTimeoutMs`. Одно убийство даёт до
@@ -400,5 +479,7 @@ class ReportWorkerWatchdog
 ```
 
 Слушатель выполняется внутри цикла надзора мастера, и пока он работает, мастер ни за чем
-не следит, поэтому он должен быть коротким. Всё, что он бросит, мастер пишет в журнал и
-отбрасывает.
+не следит, поэтому он должен быть коротким. Асинхронных вызовов в нём тоже быть не должно —
+ни `sconcur_mysql`, ни Redis-клиента `sconcur`, ни HTTP-клиента расширения: процесс мастера
+их отвергает, потому что процесс с запущенным рантаймом расширения не может форкать
+воркеры. Всё, что он бросит, мастер пишет в журнал и отбрасывает.

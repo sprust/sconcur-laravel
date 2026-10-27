@@ -838,5 +838,5 @@ to zero because a silent client is normal — liveness is kept by `pingIntervalM
 - An event sent in the first tens of milliseconds after the first connection to an idle
   worker may not reach it: the bus subscriber comes up together with that connection, and
   the fanout drops the message until its queue is bound.
-- `sconcur:servers:master:reload` drops ws connections. For the http pool a reload is
-  invisible; here it is not, and Echo reconnects on its own.
+- A restart of the master drops ws connections — and new code or a new config is a
+  restart, there is no reload. Echo reconnects on its own.

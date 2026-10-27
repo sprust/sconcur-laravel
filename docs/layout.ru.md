@@ -8,8 +8,9 @@
 config/sconcur.php             — конфиг (panel_host, scoped_services, filesystem, listeners, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider.php — провайдер (команды + проводка адаптеров в воркере)
 src/Console/                   — артизан-команды
-src/Servers/                   — MasterRunner (обёртка над SConcur\Worker\MasterCli),
-                                 WatchdogEventForwarder, Events/WorkerWatchdogTriggered
+src/Servers/                   — MasterFactory (конфиг → SConcur\Worker\WorkerMaster), WorkerRoles +
+                                 WorkerRoleEnum (что выполняет форкнутый воркер), MasterGroups, ServerFlags,
+                                 WatchdogEventForwarder, Events/WorkerForked, Events/WorkerWatchdogTriggered
 src/Queue/Rabbitmq/            — драйвер очереди и консьюмер-пул (Connector, Queue, Job, ConsumerRunner)
 src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам)
 src/Database/Mysql/            — соединение sconcur_mysql (Connector, Connection, Dsn, TransactionStack)
