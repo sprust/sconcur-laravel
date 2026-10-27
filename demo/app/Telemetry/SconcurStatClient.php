@@ -94,14 +94,14 @@ readonly class SconcurStatClient
             'workersTotal' => (int) ($data['workersTotal'] ?? 0),
             'workersHung'  => (int) ($data['workersHung'] ?? 0),
             'totals'       => [
-                'cpuPercent'     => (float) ($totals['cpuPercent'] ?? 0),
-                'memoryRssBytes' => (int) ($totals['memory']['rssBytes'] ?? 0),
-                'runtimeTasks'   => (int) ($totals['runtimeTasks'] ?? 0),
-                'work'           => $this->mapWork($totals['requests'] ?? null, $totals['consumers'] ?? null),
+                'cpuPercent'   => (float) ($totals['cpuPercent'] ?? 0),
+                ...$this->mapMemory($totals['memory'] ?? null),
+                'runtimeTasks' => (int) ($totals['runtimeTasks'] ?? 0),
+                'work'         => $this->mapWork($totals['requests'] ?? null, $totals['consumers'] ?? null),
             ],
             'master' => [
-                'cpuPercent'     => (float) ($master['cpuPercent'] ?? 0),
-                'memoryRssBytes' => (int) ($master['memory']['rssBytes'] ?? 0),
+                'cpuPercent' => (float) ($master['cpuPercent'] ?? 0),
+                ...$this->mapMemory($master['memory'] ?? null),
             ],
             'groups'  => $groups,
             'workers' => $this->orderWorkers(
@@ -134,13 +134,13 @@ readonly class SconcurStatClient
             }
 
             $groups[] = [
-                'name'           => $name,
-                'workersTotal'   => 0,
-                'workersHung'    => 0,
-                'cpuPercent'     => 0.0,
-                'memoryRssBytes' => 0,
-                'runtimeTasks'   => 0,
-                'work'           => null,
+                'name'         => $name,
+                'workersTotal' => 0,
+                'workersHung'  => 0,
+                'cpuPercent'   => 0.0,
+                ...$this->mapMemory(null),
+                'runtimeTasks' => 0,
+                'work'         => null,
             ];
         }
 
@@ -228,13 +228,13 @@ readonly class SconcurStatClient
         $totals = (array) ($group['totals'] ?? []);
 
         return [
-            'name'           => (string) ($group['name'] ?? ''),
-            'workersTotal'   => (int) ($group['workersTotal'] ?? 0),
-            'workersHung'    => (int) ($group['workersHung'] ?? 0),
-            'cpuPercent'     => (float) ($totals['cpuPercent'] ?? 0),
-            'memoryRssBytes' => (int) ($totals['memory']['rssBytes'] ?? 0),
-            'runtimeTasks'   => (int) ($totals['runtimeTasks'] ?? 0),
-            'work'           => $this->mapWork($totals['requests'] ?? null, $totals['consumers'] ?? null),
+            'name'         => (string) ($group['name'] ?? ''),
+            'workersTotal' => (int) ($group['workersTotal'] ?? 0),
+            'workersHung'  => (int) ($group['workersHung'] ?? 0),
+            'cpuPercent'   => (float) ($totals['cpuPercent'] ?? 0),
+            ...$this->mapMemory($totals['memory'] ?? null),
+            'runtimeTasks' => (int) ($totals['runtimeTasks'] ?? 0),
+            'work'         => $this->mapWork($totals['requests'] ?? null, $totals['consumers'] ?? null),
         ];
     }
 
@@ -246,14 +246,36 @@ readonly class SconcurStatClient
     protected function mapWorker(array $worker): array
     {
         return [
-            'pid'            => (int) ($worker['pid'] ?? 0),
-            'group'          => (string) ($worker['group'] ?? ''),
-            'hung'           => (bool) ($worker['hung'] ?? false),
-            'uptimeSeconds'  => (float) ($worker['uptimeSeconds'] ?? 0),
-            'cpuPercent'     => (float) ($worker['cpuPercent'] ?? 0),
-            'memoryRssBytes' => (int) ($worker['memory']['rssBytes'] ?? 0),
-            'runtimeTasks'   => (int) ($worker['runtimeTasks'] ?? 0),
-            'work'           => $this->mapWork($worker['requests'] ?? null, $worker['consumers'] ?? null),
+            'pid'           => (int) ($worker['pid'] ?? 0),
+            'group'         => (string) ($worker['group'] ?? ''),
+            'hung'          => (bool) ($worker['hung'] ?? false),
+            'uptimeSeconds' => (float) ($worker['uptimeSeconds'] ?? 0),
+            'cpuPercent'    => (float) ($worker['cpuPercent'] ?? 0),
+            ...$this->mapMemory($worker['memory'] ?? null),
+            'runtimeTasks'  => (int) ($worker['runtimeTasks'] ?? 0),
+            'work'          => $this->mapWork($worker['requests'] ?? null, $worker['consumers'] ?? null),
+        ];
+    }
+
+    /**
+     * The panel's memory section, flattened the way the page reads it.
+     *
+     * The resident set size counts a page shared with other processes whole in each of
+     * them, and every worker shares the application its master loaded before the fork —
+     * so RSS summed over a pool counts that copy once per worker. The proportional share
+     * (Pss) divides such a page among the processes mapping it and sums to the memory the
+     * pool takes; SwapPss is the same share of what went to swap.
+     *
+     * @return array{memoryRssBytes: int, memoryPssBytes: int, memorySwapPssBytes: int}
+     */
+    protected function mapMemory(mixed $memory): array
+    {
+        $memory = is_array($memory) ? $memory : [];
+
+        return [
+            'memoryRssBytes'     => (int) ($memory['rssBytes'] ?? 0),
+            'memoryPssBytes'     => (int) ($memory['pssBytes'] ?? 0),
+            'memorySwapPssBytes' => (int) ($memory['swapPssBytes'] ?? 0),
         ];
     }
 
@@ -317,14 +339,14 @@ readonly class SconcurStatClient
             'workersTotal' => 0,
             'workersHung'  => 0,
             'totals'       => [
-                'cpuPercent'     => 0.0,
-                'memoryRssBytes' => 0,
-                'runtimeTasks'   => 0,
-                'work'           => null,
+                'cpuPercent'   => 0.0,
+                ...$this->mapMemory(null),
+                'runtimeTasks' => 0,
+                'work'         => null,
             ],
             'master' => [
-                'cpuPercent'     => 0.0,
-                'memoryRssBytes' => 0,
+                'cpuPercent' => 0.0,
+                ...$this->mapMemory(null),
             ],
             'groups'  => [],
             'workers' => [],

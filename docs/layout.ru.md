@@ -22,7 +22,7 @@ src/Filesystem/                — диск sconcur_local и фасад File н�
                                  FilesFeatureCall, LocalPaths)
 src/Cache/Redis/               — кэш-стор sconcur_redis (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер),
-                                 ProcessMemory (резидентная память процесса, RSS),
+                                 ProcessMemory (резидентная память процесса и её пропорциональная доля),
                                  Coroutine (выполняется ли вызывающий код в корутине расширения)
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)

@@ -53,7 +53,11 @@ flowchart TB
 ```
 
 All four groups are pools of one master, configured in `demo/config/sconcur.php`.
-The master's telemetry panel is what the page's top section reads.
+The master's telemetry panel is what the page's top section reads. Memory is shown three
+ways: `rss` counts a page shared with other processes whole in each of them, and every
+worker shares the application the master loaded before the fork, so the RSS of a pool
+counts that copy once per worker; `pss` divides a shared page among the processes mapping
+it and adds up to the memory the pool takes; `swap pss` is the same share of swap.
 
 ## State after a restart
 

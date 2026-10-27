@@ -26,13 +26,13 @@ in [websocket.md](websocket.md).
 | Component | Version | What for |
 |---|---|---|
 | PHP | 8.4, NTS | |
-| the `sconcur` extension | 0.17.0 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
+| the `sconcur` extension | 0.18.0 | exactly the `sconcur/sconcur` version; installed separately (step 2) |
 | MySQL | 8.4 | only for the `sconcur_mysql` connection |
 | RabbitMQ | 4.1 | only for the `sconcur_rabbitmq` queue |
 | Redis | 8.2 | only for the `sconcur` Redis client and the `sconcur_redis` cache store |
 
 The `.so` and the PHP side cross a protocol boundary that changes with the version, so
-`sconcur/sconcur` is pinned exactly (`0.17.0`) rather than with a caret, and the
+`sconcur/sconcur` is pinned exactly (`0.18.0`) rather than with a caret, and the
 extension has to match it exactly: a version that drifted is rejected on load rather
 than working somehow.
 

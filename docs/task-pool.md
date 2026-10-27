@@ -272,8 +272,11 @@ prefix, the body `{"t":"snapshot","s":<snapshot>}`. The master puts the worker's
 `SCONCUR_SERVER_NAME` as `<group>:<index>`, and the group is taken from it by the last
 colon.
 
-What PHP can measure: RSS from `/proc/self/status` and CPU from the delta of
-`/proc/self/stat` — the same sources the extension reads. What it cannot: the extension
+What PHP can measure: memory — the resident set size from `/proc/self/status`, its
+proportional share and the same share of swap (`Pss`, `SwapPss`) from
+`/proc/self/smaps_rollup` — and CPU from the delta of `/proc/self/stat`: the same sources
+and fields the extension reads. Memory is read every five seconds, as the extension reads
+it; the snapshots in between repeat the last reading. What it cannot: the extension
 runtime's memory and its number of live tasks simply do not exist for such a worker and go
 out as zeros.
 

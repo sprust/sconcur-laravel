@@ -168,6 +168,12 @@
 
     <div class="panel">
         <h2>Master telemetry <span class="muted" id="telemetry-state"></span></h2>
+        <p class="muted" style="margin-top:0">
+            Every worker is a fork of the master and shares the application it loaded.
+            <code>rss</code> counts a shared page whole in every process that maps it;
+            <code>pss</code> divides it among them, so it adds up across the pool to the
+            memory the pool takes. <code>swap pss</code> is the same share of swap.
+        </p>
         <div class="tiles" id="telemetry-tiles"></div>
         <h2 style="margin:16px 0 8px">Groups</h2>
         <div class="scroll"><table id="groups-table"></table></div>
@@ -370,6 +376,10 @@
         ? [work.inProcess, work.finished, work.refused, work.avgMs.toFixed(1)]
         : ['—', '—', '—', '—'];
 
+    const memoryCells = (entry) => [
+        bytes(entry.memoryRssBytes), bytes(entry.memoryPssBytes), bytes(entry.memorySwapPssBytes),
+    ];
+
     const renderTelemetry = (data) => {
         if (!data.available) {
             $('telemetry-state').innerHTML = `<span class="bad">unavailable — ${data.reason}</span>`;
@@ -390,25 +400,28 @@
             ['avg ms', data.totals.work ? data.totals.work.avgMs.toFixed(1) : '—'],
             ['cpu %', data.totals.cpuPercent.toFixed(1)],
             ['rss', bytes(data.totals.memoryRssBytes)],
+            ['pss', bytes(data.totals.memoryPssBytes)],
+            ['swap pss', bytes(data.totals.memorySwapPssBytes)],
             ['ext tasks', data.totals.runtimeTasks],
             ['master rss', bytes(data.master.memoryRssBytes)],
+            ['master pss', bytes(data.master.memoryPssBytes)],
         ].map(([key, value]) => `<div class="tile"><div class="k">${key}</div><div class="v">${value}</div></div>`).join('');
 
         $('groups-table').innerHTML =
-            row(['group', 'workers', 'hung', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'ext tasks'], 'th')
+            row(['group', 'workers', 'hung', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'pss', 'swap pss', 'ext tasks'], 'th')
             + data.groups.map((group) => row([
                 group.name, group.workersTotal, group.workersHung,
                 ...workCells(group.work),
-                group.cpuPercent.toFixed(1), bytes(group.memoryRssBytes), group.runtimeTasks,
+                group.cpuPercent.toFixed(1), ...memoryCells(group), group.runtimeTasks,
             ])).join('');
 
         $('workers-table').innerHTML =
-            row(['pid', 'group', 'uptime s', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'ext tasks'], 'th')
+            row(['pid', 'group', 'uptime s', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'pss', 'swap pss', 'ext tasks'], 'th')
             + data.workers.map((worker) => row([
                 worker.hung ? `<span class="bad">${worker.pid}</span>` : worker.pid,
                 worker.group, worker.uptimeSeconds.toFixed(0),
                 ...workCells(worker.work),
-                worker.cpuPercent.toFixed(1), bytes(worker.memoryRssBytes), worker.runtimeTasks,
+                worker.cpuPercent.toFixed(1), ...memoryCells(worker), worker.runtimeTasks,
             ])).join('');
     };
 
