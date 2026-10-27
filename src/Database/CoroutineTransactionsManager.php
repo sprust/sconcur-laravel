@@ -21,8 +21,8 @@ use SConcur\Context\Context;
  * rollback is worse — removeAllTransactionsForConnection() fires every other coroutine's
  * rollback callbacks.
  *
- * This is not hypothetical bookkeeping: Model::saveOrFail() is a transaction, so an
- * ordinary create on a busy connection drives it.
+ * This is not hypothetical bookkeeping: Model::saveOrFail() and deleteOrFail() are
+ * transactions, so a model saved that way on a busy connection drives it.
  *
  * The state cannot be moved into the context field by field. Callbacks run inside these
  * methods, and a callback may dispatch a job or write to Mongo — a suspension point — so

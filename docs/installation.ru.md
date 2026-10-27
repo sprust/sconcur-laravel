@@ -46,7 +46,8 @@ composer require sconcur/laravel
 (`extra.laravel.providers` в `composer.json` пакета) — в `bootstrap/providers.php` его
 дописывать не нужно. Он регистрирует артизан-команды, драйвер очереди
 `sconcur_rabbitmq`, драйвер БД `sconcur_mysql`, Redis-клиент `sconcur`, кэш-стор
-`sconcur_redis`, пул задач и корутинные адаптеры.
+`sconcur_redis`, драйвер диска `sconcur_local`, бродкастер `sconcur`, пул задач,
+WebSocket-пул, корутинные адаптеры и слушатели из `sconcur.listeners`.
 
 ## 2. Расширение `sconcur.so`
 
@@ -60,10 +61,11 @@ echo "extension=sconcur.so" > "$(php-config --ini-dir)/sconcur.ini"
 php artisan sconcur:extension:status
 ```
 
-Аргумент — путь назначения, и каталог должен существовать. Без аргумента файл ложится в
-`base_path('servers/sconcur')`, и включать расширение придётся флагом
-(`php -d extension=servers/sconcur/sconcur.so`): для пробы годится, для мастера под
-супервизором процессов — нет.
+Аргумент — место назначения: путь к файлу или существующий каталог, в который файл
+ложится как `sconcur.so`; каталог в любом случае должен существовать. Без аргумента цель —
+`base_path('servers/sconcur')`, и это должен быть существующий каталог, а включать
+расширение придётся флагом (`php -d extension=servers/sconcur/sconcur.so`): для пробы
+годится, для мастера под супервизором процессов — нет.
 
 В образе то же самое — одной инструкцией после `composer install`:
 
@@ -175,8 +177,8 @@ mkdir -p storage/sconcur/runtime storage/sconcur/logs
 ## 6. Соединение `sconcur_mysql` (по желанию)
 
 Неблокирующий MySQL включается там же, где выбирается любое соединение Laravel, —
-в `config/database.php` и `DB_CONNECTION`. Подробности и ограничения — раздел
-«База данных».
+в `config/database.php` и `DB_CONNECTION`. Подробности и ограничения — в
+[database.ru.md](database.ru.md).
 
 ```php
 // config/database.php
@@ -329,10 +331,11 @@ php artisan sconcur:servers:master:status   # running: pid=… workers=… group
 curl -i http://localhost/                   # ответ отдаёт уже воркер SConcur
 ```
 
-`sconcur:servers:master:status` печатает по строке на группу: сколько воркеров она
-держит. Пустой список групп означает, что конфиг не опубликован или
-`groups` в нём пуст; группы `rabbitmq` не будет при `SCONCUR_RABBITMQ_WORKER_COUNT` ниже
-единицы — это штатный способ её выключить.
+`sconcur:servers:master:status` печатает по строке на группу (`--group=` оставляет одну):
+сколько воркеров она держит. Если мастер не запущен, команда печатает `stopped` и выходит
+с кодом `3`; без опубликованного конфига она падает и говорит об этом. Группы `rabbitmq`
+не будет при `SCONCUR_RABBITMQ_WORKER_COUNT` ниже единицы — это штатный способ её
+выключить.
 
 Живьём всё то же самое можно посмотреть на демо-приложении в этом репозитории —
 [demo/README.ru.md](../demo/README.ru.md).

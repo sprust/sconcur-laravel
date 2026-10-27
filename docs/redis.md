@@ -79,7 +79,7 @@ than adding to it — which is what is needed here: the framework's entries carr
 | `password` | — | password |
 | `database` | `0` | database number |
 | `url` | — | `redis://`, `rediss://` or `tls://` URL; merged into the fields the way `RedisManager` does it, and wins over them |
-| `timeout_ms` | `30000` (the extension's) | deadline for one command; `0` means no deadline |
+| `timeout_ms` | `30000` (the feature's) | deadline for one command; `0` means no deadline |
 | `pool_size` | `4` (the extension's) | multiplexed connections per process for this server; at most 64 |
 | `conn_max_lifetime_ms` | no limit | how long a pooled connection is kept before it is replaced |
 | `prefix` | `redis.options.prefix` | put in front of the keys, as phpredis does; see [the key prefix](#the-key-prefix) |
@@ -166,8 +166,8 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
 - Any other call is read with phpredis's signature, and so is every call through
   `Redis::command()` and on the batch of a pipeline or a transaction. Where that signature
   takes an options array or an order of its own, `SConcur\Laravel\Redis\PhpRedisArguments`
-  reads it: `zRange`/`zRevRange` with `true` or `['withscores', 'byscore', 'bylex', 'rev',
-  'limit']`, `zRangeByScore`/`zRevRangeByScore` with `['withscores', 'limit']`, `zAdd` with
+  reads it: `zRange` with `true` or `['withscores', 'byscore', 'bylex', 'rev', 'limit']`,
+  `zRevRange` with `true` or `['withscores']`, `zRangeByScore`/`zRevRangeByScore` with `['withscores', 'limit']`, `zAdd` with
   its flags before the pairs, `zInterStore`/`zUnionStore`, `set` with a TTL or
   `['nx', 'ex' => 10]`, `lRem(key, value, count)`, `eval`/`evalSha(script, arguments,
   numberOfKeys)`, `sort`, `xAdd`, `xRead`, `lPos`, `getEx`, `copy`, `flushDb`/`flushAll`

@@ -355,8 +355,8 @@ return [
         | every connection there is, several do not — and a list built from one worker's
         | connections is wrong rather than partial.
         |
-        | `memory` under a multi-worker pool is reported by the start command, not honoured
-        | in silence.
+        | `memory` under a multi-worker pool is reported in every ws worker's log as it
+        | starts, not honoured in silence.
         */
         'presence' => [
             'store'        => env('SCONCUR_WS_PRESENCE_STORE', 'auto'),
@@ -392,9 +392,10 @@ return [
         // about 60 MiB for an application with the extension loaded.
         'memory_mb'   => (int) env('SCONCUR_TASKS_MEMORY_MB', 256),
 
-        // How finely a pause is cut, which is how fast the pool notices a signal: a
-        // pcntl handler only runs while PHP does, and a process whose coroutines are all
-        // parked in the extension executes none. The library's own servers poll on the same 250 ms.
+        // How finely a pause is cut, which is how fast the pool notices a signal: the
+        // extension records it, and only PHP running on the controller's tick takes it —
+        // a process whose coroutines are all parked in the extension runs no PHP. The
+        // library's own servers poll on the same 250 ms.
         'sleep_chunk_ms' => (int) env('SCONCUR_TASKS_SLEEP_CHUNK_MS', 250),
 
         // Automatic coroutine switching. Off, as in the library: with it on, another

@@ -63,6 +63,9 @@ and passed to the extension; where the array has none, the extension's own defau
 `max_open_conns` is the one default the package overrides, and a bounded pool is not
 caution: every concurrent statement takes a connection of its own, so an unbounded pool
 walks a fan-out straight into the server's `max_connections` (MySQL error 1040).
+The cap is per worker process: every worker opens a pool of its own, so the server sees
+up to `max_open_conns` times the number of workers that query it. Divide what
+`max_connections` leaves after the other clients by that number.
 
 ## Which connection the application uses
 
@@ -115,8 +118,8 @@ a coroutine it has one manager of its own and behaves indistinguishably from the
 one. Without it, a single per-process singleton would key its records by connection name
 rather than by whoever opened the transaction, and one coroutine's commit would run a
 neighbour's `afterCommit` while that neighbour's transaction was still open.
-`Model::saveOrFail()` is a transaction, so creating a model the ordinary way already lands
-there.
+`Model::saveOrFail()` is a transaction, so a model saved through it lands there without an
+explicit `DB::transaction()`.
 
 ## Differences from PDO
 
@@ -170,7 +173,8 @@ A model that needs different storage names its connection explicitly.
 ## Delay and confirms (`config/queue.php`)
 
 `confirm_publishes` turns on a confirm for every publish and `confirm_timeout_seconds` is
-how long to wait for it; a delayed publish is confirmed always, regardless of both.
+how long to wait for it; a delayed publish is confirmed always, regardless of
+`confirm_publishes`, and waits the same `confirm_timeout_seconds`.
 
 ## Transactions on the PDO connection (important)
 

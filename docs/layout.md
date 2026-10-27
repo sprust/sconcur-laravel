@@ -12,7 +12,8 @@ src/Servers/                   — MasterFactory (config → SConcur\Worker\Work
                                  WorkerRoleEnum (what a forked worker runs), MasterGroups, ServerFlags,
                                  WatchdogEventForwarder, Events/WorkerForked, Events/WorkerWatchdogTriggered
 src/Queue/Rabbitmq/            — the queue driver and the consumer pool (Connector, Queue, Job, ConsumerRunner)
-src/Database/                  — TransactionStore (the transaction nesting level, per coroutine)
+src/Database/                  — TransactionStore (the transaction nesting level, per coroutine),
+                                 CoroutineTransactionsManager (Laravel's transactions manager, per coroutine)
 src/Database/Mysql/            — the sconcur_mysql connection (Connector, Connection, Dsn, TransactionStack)
 src/Redis/                     — the sconcur Redis client (Connector, Connection, Dsn, CommandBatch,
                                  CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,

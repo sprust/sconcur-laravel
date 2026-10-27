@@ -72,7 +72,7 @@ container down. To do it by hand: `make demo-reset`.
 | Endpoint | What it shows |
 |---|---|
 | `GET /` | the page: telemetry, and a control for each of the sections below |
-| `GET /api/health` | liveness; `make setup` and CI check this one |
+| `GET /api/health` | liveness |
 | `GET /api/concurrent?n=10&ms=200` | N cooperative pauses as coroutines of one `WaitGroup`, then the same N one after another. The concurrent leg takes about `ms`, the sequential one `n × ms` — same process, same thread |
 | `GET /api/notes` / `POST /api/notes` | Eloquent over the `sconcur_mysql` connection |
 | `POST /api/notes/bulk` | N inserts as coroutines, each in a transaction of its own — which holds on this connection because the nesting level is per coroutine and the extension pins each transaction to a physical connection |

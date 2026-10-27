@@ -53,9 +53,8 @@ class TaskPoolController
      * True when the pool stopped for a reason a fresh process should follow: the memory
      * limit, or a signal while a master supervises the pool.
      *
-     * The master's own stop, reload and retire send SIGTERM too, but for a worker it is
-     * draining or rolling the master reads no exit code, so there the answer changes
-     * nothing. Where it is read, the signal is the master's watchdog killing a pool whose
+     * The master's own stop sends SIGTERM too, but for a worker it is draining the master
+     * reads no exit code, so there the answer changes nothing. Where it is read, the signal is the master's watchdog killing a pool whose
      * PHP thread stopped answering, or an operator's kill; exiting zero there would leave
      * the pool down for good under `on-failure`. Under a master the pool is stopped for
      * good with sconcur:tasks:stop, not with a signal.

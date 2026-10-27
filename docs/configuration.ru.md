@@ -2,8 +2,8 @@
 
 # Конфигурация (ENV)
 
-Все значения `config/sconcur.php` берутся из ENV, и здесь перечислена каждая переменная,
-которую читает пакет. Дефолты — пакетные, из каркаса; в опубликованном файле приложение
+Значения `config/sconcur.php` берутся из ENV, кроме немногих, названных ниже, и здесь
+перечислена каждая переменная, которую читает пакет. Дефолты — пакетные, из каркаса; в опубликованном файле приложение
 ставит свои.
 
 ## Оглавление
@@ -131,7 +131,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 
 | ENV | Дефолт | Назначение |
 |---|---|---|
-| `SCONCUR_PANEL_HOST` | `http://127.0.0.1:28081/api/stats` | откуда дашборд читает статистику мастера |
+| `SCONCUR_PANEL_HOST` | `http://127.0.0.1:28081/api/stats` | откуда дашборд демо читает статистику мастера; сам пакет её не читает |
 
 Переключателя у coroutine-scoped приложения нет и определения режима тоже: провайдер
 ставит адаптеры в любом процессе.
@@ -191,7 +191,8 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 `HttpServer::fromArgs`, `QueueConsumer::fromArgs` и `WsServer::fromArgs`; всё, что не
 скаляр (список очередей), идёт в JSON.
 
-Команды `http:start`, `rabbitmq:start` и `ws:start` запускают сервер без мастера. Они
+Команды `sconcur:servers:http:start`, `sconcur:servers:rabbitmq:start` и
+`sconcur:servers:ws:start` запускают сервер без мастера. Они
 объявляют те же флаги, а если ни одного не передано, берут блок `server` группы своей
 роли. Группа ищется по роли, а не по имени, — иначе переименование группы тихо оставило
 бы standalone-запуск на дефолтах библиотеки.
@@ -250,7 +251,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 | `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | дренировать и выйти после N сообщений |
 | `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | дренировать и выйти через N секунд |
 | `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | дренировать и выйти по размеру кучи |
-| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | лимит памяти воркера, МиБ |
+| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | `memory` в `WorkerOptions` Laravel, МиБ; `Worker::process()` его не проверяет — консьюмер останавливает лимит `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` |
 | `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | соединение `config/queue.php`, на котором идут джобы |
 | `SCONCUR_RABBITMQ_TRIES` | `1` | попыток до `failed_jobs` |
 | `SCONCUR_RABBITMQ_BACKOFF` | `0` | пауза перед повтором, секунд |
@@ -338,7 +339,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 
 `SCONCUR_WS_PRESENCE_STORE` со значением `memory` верен ровно пока процесс один. При пуле
 он не неполон, а неверен — каждый воркер отвечает своими подписчиками; `auto` берёт там
-`cache`, а явный `memory` команда старта не принимает молча, а сообщает о нём.
+`cache`, а о явном `memory` каждый ws-воркер при старте пишет в лог.
 
 ## Пул задач
 
@@ -347,7 +348,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 | ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_TASKS_CONTROL_KEY` | `sconcur:tasks:control` | ключ кэша, через который до пула доходят `stop` и `restart` |
-| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | путь flock; не даёт стартовать второй копии задачи |
+| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | префикс пути flock, по файлу на задачу (`<path>.<task>`); не даёт стартовать второй копии задачи |
 | `SCONCUR_TASKS_MEMORY_MB` | `256` | лимит памяти процесса, по большему из кучи PHP и RSS; за ним — выход с `EXIT_RESTART` |
 | `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | насколько мелко режется пауза, то есть как быстро пул замечает сигнал |
 | `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `0` | автоматическое переключение корутин; `0` — выключено |

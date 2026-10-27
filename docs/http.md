@@ -67,7 +67,8 @@ is sent whole, like a callback that prints.
 
 Every chunk yielded is one chunk on the wire, whether or not anything was waited on in
 between, so a generator that only computes streams too
-(`src/Http/IterableResponseBody.php`).
+(`src/Http/IterableResponseBody.php`). The server reads at most 64 KiB at a time, so a
+longer chunk goes out in 64 KiB pieces; an empty one sends nothing.
 
 A generator runs on the stack of whoever advances it — here the request coroutine. So it
 works like any code of the handler:
@@ -78,8 +79,8 @@ works like any code of the handler:
   coroutine the ordinary way and lets the other requests of the worker run;
 - preemption and `handlerTimeoutMs` reach it as they reach any handler.
 
-A chunk is a string; an integer, a float, `null` or a `Stringable` is turned into one the way
-`echo` would. Anything else ends the body with an `UnexpectedValueException`.
+A chunk is a string; an integer, a float, a boolean, `null` or a `Stringable` is turned into
+one the way `echo` would. Anything else ends the body with an `UnexpectedValueException`.
 
 ### Termination
 

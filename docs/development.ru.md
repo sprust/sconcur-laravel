@@ -16,10 +16,10 @@ make setup
 
 | Контейнер | Роль |
 |---|---|
-| `scl-nginx` | единственный опубликованный вход; проксирует в пул `http` |
+| `scl-nginx` | единственный опубликованный вход; проксирует в пулы `http` и `ws` |
 | `scl-php` | только CLI: composer, artisan, phpunit, анализаторы. php-fpm здесь нет — HTTP отдаёт сам SConcur. Здесь, и только здесь, стоит phpredis — для тестов, сверяющих с ним Redis-клиент `sconcur` |
 | `scl-workers` | supervisor, под ним мастер SConcur с группами `http`, `rabbitmq`, `ws` и `tasks` |
-| `scl-mysql` | MySQL 8.4, данные в `tmpfs` — стираются при пересоздании контейнера |
+| `scl-mysql` | MySQL 8.4, данные в `tmpfs` — стираются при остановке контейнера |
 | `scl-rabbitmq` | RabbitMQ 4.1 с панелью, тоже в `tmpfs` |
 | `scl-redis` | Redis 8.2 с паролем, тоже в `tmpfs`; кэш-стор демо и `Redis::` |
 

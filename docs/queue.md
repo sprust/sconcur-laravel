@@ -27,9 +27,11 @@ What happens if it is skipped:
 - the pool doing `basic.consume` on a queue that does not exist gets
   `SConcur\Exceptions\Amqp\QueueException` reading
   `Server channel error: 404, message: NOT_FOUND - no queue 'default' in vhost '/'`.
-  The worker exits `1`, the master brings up a replacement, and round it goes with growing
-  backoff: the pool reads nothing, and in the telemetry panel its group stands with no
-  workers.
+  The first open is not retried: the worker exits non-zero before it says it is up. Once
+  every slot of the `rabbitmq` group has failed that way at the master's start, the master
+  stops all its groups, HTTP included, and exits with code `70`
+  (`group rabbitmq: no worker came up — …; stopping with code 70`); supervisor starts it
+  again, and it fails the same way.
 
 The command declares what is listed in `sconcur.queue.rabbitmq.queues`, with the flags
 `durable`, not `exclusive`, not `autoDelete` and no arguments — the same ones
@@ -86,8 +88,12 @@ broker — while `publishConfirmed` is mandatory by default and throws
 
 ## The consumer
 
-The pool is a group of the master, so it lives under the same supervisor as HTTP and
-reports into the same telemetry panel (the `consumers` section).
+The pool is the master's `rabbitmq` group, so it lives under the same supervisor as HTTP
+and reports into the same telemetry panel (the `consumers` section). A worker of the group
+runs `ConsumerRunner` itself, on a `QueueConsumer` built by `QueueConsumer::fromArgs()`
+from the group's `server` block. `sconcur:servers:rabbitmq:start` runs the same consumer in
+the foreground, outside the master; given none of the consumer's flags, it takes them from
+that `server` block.
 
 ```
 php artisan sconcur:rabbitmq:declare
@@ -110,6 +116,12 @@ next one. It is off by default because a deadline does not slow down the job it 
 it refuses it, and that is for the application, which knows its jobs, to decide.
 `WorkerOptions::$timeout` is deliberately zero next to it: the Laravel worker's `SIGALRM`
 would kill the process along with every handler running beside it.
+
+`maxMessages`, `maxRuntimeSeconds` and `maxMemoryBytes` (the PHP heap) stop a worker once
+it has finished the handlers it is running. Under the master that is a stop at a limit:
+the replacement is forked at once, without the crash backoff, and `maxMessages` is spread —
+each worker stops somewhere between the limit and half again as many. Outside the master
+the limit is exact.
 
 The master's watchdog is a different thing and it is on. A job that holds the PHP thread
 in a native call — a PDO query, `curl`, `sleep()` — for longer than `watchdogTimeoutMs`

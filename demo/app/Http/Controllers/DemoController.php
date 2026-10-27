@@ -9,7 +9,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 
 /**
- * The page itself and the liveness probe behind `make setup`.
+ * The page itself and a liveness probe.
  */
 class DemoController
 {

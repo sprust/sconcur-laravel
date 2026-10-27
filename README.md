@@ -87,7 +87,8 @@ There is no reload: a master holds the application it loaded, so new code or a n
 is a new master — `master:stop`, and the process supervisor starts it again.
 
 The `*:start` commands of the four runtimes run one of them in the foreground without a
-master, with the flags of their group's `server` block unless given their own. The
+master; the HTTP, queue and WebSocket ones take the flags of their group's `server` block
+unless given their own. The
 handler is coroutine-safe (per-fiber context) and requests inside one process are handled
 concurrently; a multi-process production setup is `master:start`.
 

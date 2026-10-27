@@ -12,7 +12,8 @@ src/Servers/                   — MasterFactory (конфиг → SConcur\Worke
                                  WorkerRoleEnum (что выполняет форкнутый воркер), MasterGroups, ServerFlags,
                                  WatchdogEventForwarder, Events/WorkerForked, Events/WorkerWatchdogTriggered
 src/Queue/Rabbitmq/            — драйвер очереди и консьюмер-пул (Connector, Queue, Job, ConsumerRunner)
-src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам)
+src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам),
+                                 CoroutineTransactionsManager (менеджер транзакций Laravel, по корутинам)
 src/Database/Mysql/            — соединение sconcur_mysql (Connector, Connection, Dsn, TransactionStack)
 src/Redis/                     — Redis-клиент sconcur (Connector, Connection, Dsn, CommandBatch,
                                  CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,

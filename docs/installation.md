@@ -46,7 +46,8 @@ composer require sconcur/laravel
 (`extra.laravel.providers` in the package's `composer.json`) — there is nothing to add to
 `bootstrap/providers.php`. It registers the artisan commands, the `sconcur_rabbitmq` queue
 driver, the `sconcur_mysql` database driver, the `sconcur` Redis client, the `sconcur_redis`
-cache store, the task pool and the coroutine adapters.
+cache store, the `sconcur_local` disk driver, the `sconcur` broadcaster, the task pool, the
+WebSocket pool, the coroutine adapters and the listeners of `sconcur.listeners`.
 
 ## 2. The `sconcur.so` extension
 
@@ -61,10 +62,11 @@ echo "extension=sconcur.so" > "$(php-config --ini-dir)/sconcur.ini"
 php artisan sconcur:extension:status
 ```
 
-The argument is the destination path, and its directory must exist. Without an argument
-the file lands in `base_path('servers/sconcur')`, and the extension then has to be
-enabled with a flag (`php -d extension=servers/sconcur/sconcur.so`): fine for a look,
-not for a master under a process supervisor.
+The argument is the destination: a file path, or an existing directory the file is saved
+to as `sconcur.so`; the directory must exist either way. Without an argument the target is
+`base_path('servers/sconcur')`, which has to be an existing directory, and the extension
+then has to be enabled with a flag (`php -d extension=servers/sconcur/sconcur.so`): fine
+for a look, not for a master under a process supervisor.
 
 In an image it is one instruction after `composer install`:
 
@@ -332,9 +334,10 @@ php artisan sconcur:servers:master:status   # running: pid=… workers=… group
 curl -i http://localhost/                   # answered by a SConcur worker already
 ```
 
-`sconcur:servers:master:status` prints one line per group: how many workers it keeps up. An empty group list means the config is not published or its `groups` is
-empty; the `rabbitmq` group is absent whenever `SCONCUR_RABBITMQ_WORKER_COUNT` is below
-one — that is the supported way to turn it off.
+`sconcur:servers:master:status` prints one line per group (`--group=` narrows it to one):
+how many workers it keeps up. With no master running it prints `stopped` and exits `3`;
+without the published config it fails and says so. The `rabbitmq` group is absent whenever
+`SCONCUR_RABBITMQ_WORKER_COUNT` is below one — that is the supported way to turn it off.
 
 All of it can be watched live on the demo application in this repository — see
 [demo/README.md](../demo/README.md).

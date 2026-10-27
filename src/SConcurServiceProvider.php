@@ -459,7 +459,7 @@ class SConcurServiceProvider extends ServiceProvider
      * DatabaseManager::configure() hands every connection whatever `db.transactions`
      * resolves to, once, so this has to be in place before the first connection is built
      * — which register() is. Model::saveOrFail() opens a transaction, so this is on the
-     * path of an ordinary create, not only of an explicit DB::transaction().
+     * path of a model saved that way, not only of an explicit DB::transaction().
      */
     private function registerCoroutineTransactionsManager(): void
     {

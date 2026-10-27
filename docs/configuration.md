@@ -2,8 +2,8 @@ English | [Русский](configuration.ru.md)
 
 # Configuration (ENV)
 
-Every value of `config/sconcur.php` comes from ENV, and every variable the package reads is
-listed here. The defaults are the package's, from the skeleton; in the published file the
+The values of `config/sconcur.php` come from ENV, apart from the few named below, and every
+variable the package reads is listed here. The defaults are the package's, from the skeleton; in the published file the
 application sets its own.
 
 ## Table of contents
@@ -132,7 +132,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 
 | ENV | Default | What it does |
 |---|---|---|
-| `SCONCUR_PANEL_HOST` | `http://127.0.0.1:28081/api/stats` | where the dashboard reads the master's stats from |
+| `SCONCUR_PANEL_HOST` | `http://127.0.0.1:28081/api/stats` | where the demo's dashboard reads the master's stats from; the package itself does not read it |
 
 The coroutine-scoped application has no switch and no mode detection: the provider
 installs the adapters in every process.
@@ -192,7 +192,8 @@ the server or consumer each worker builds — turned into `--name=value` flags a
 `HttpServer::fromArgs`, `QueueConsumer::fromArgs` and `WsServer::fromArgs`; anything that
 is not a scalar (the queue list) goes as JSON.
 
-The `http:start`, `rabbitmq:start` and `ws:start` commands run a server without a master.
+The `sconcur:servers:http:start`, `sconcur:servers:rabbitmq:start` and
+`sconcur:servers:ws:start` commands run a server without a master.
 They declare the same flags, and without any given they take the `server` block of the
 group of their role. The group is looked up by its role rather than by name — otherwise
 renaming a group would quietly leave a standalone run on the library's defaults.
@@ -251,7 +252,7 @@ How the pool works is in [queue.md](queue.md).
 | `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | drain and exit after N messages |
 | `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | drain and exit after N seconds |
 | `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | drain and exit on heap size |
-| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | worker memory limit, MiB |
+| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | `memory` of the Laravel `WorkerOptions`, MiB; `Worker::process()` does not check it — the limit that stops a consumer is `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` |
 | `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | the `config/queue.php` connection the jobs run on |
 | `SCONCUR_RABBITMQ_TRIES` | `1` | attempts before `failed_jobs` |
 | `SCONCUR_RABBITMQ_BACKOFF` | `0` | delay before a retry, seconds |
@@ -337,8 +338,8 @@ finish. It therefore has to stay well below the group's `shutdownTimeoutMs`.
 
 `SCONCUR_WS_PRESENCE_STORE` set to `memory` is correct only while there is one process.
 Under a pool it is not incomplete but wrong, every worker answering with its own
-subscribers — `auto` picks `cache` there, and an explicit `memory` is reported by the start
-command.
+subscribers — `auto` picks `cache` there, and an explicit `memory` is reported in the log
+by every ws worker as it starts.
 
 ## The task pool
 
@@ -347,7 +348,7 @@ How the pool works is in [task-pool.md](task-pool.md).
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_TASKS_CONTROL_KEY` | `sconcur:tasks:control` | the cache key `stop` and `restart` reach the pool through |
-| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | flock path; keeps a second copy of a task from starting |
+| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | flock path prefix, one file per task (`<path>.<task>`); keeps a second copy of a task from starting |
 | `SCONCUR_TASKS_MEMORY_MB` | `256` | process memory limit, against the larger of the PHP heap and RSS; past it, an exit with `EXIT_RESTART` |
 | `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | how finely a pause is cut, that is how fast the pool notices a signal |
 | `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `0` | automatic coroutine switching; `0` — off |

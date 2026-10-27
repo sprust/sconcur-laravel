@@ -92,13 +92,13 @@ ones talk to the live MySQL, RabbitMQ and Redis.
 
 Six containers, prefix `scl-`:
 
-- `nginx` — the only published entry point; proxies to the HTTP pool
+- `nginx` — the only published entry point; proxies to the HTTP and WebSocket pools
 - `php` — CLI only (composer, artisan, phpunit, analyzers). There is no php-fpm in
   this repository: HTTP is served by SConcur itself. It alone carries phpredis
   (`ext-redis`), for `PhpRedisParityTest`; `workers` and the package run without it.
 - `workers` — supervisor running `php demo/artisan sconcur:servers:master:start`
-- `mysql`, `rabbitmq`, `redis` — **in-memory** (`tmpfs`), state is wiped when the container is
-  recreated. Redis runs with a password, so the client's login path is exercised. The named-volume mounts sit beside them, commented out.
+- `mysql`, `rabbitmq`, `redis` — **in-memory** (`tmpfs`), state is wiped when the container
+  stops. Redis runs with a password, so the client's login path is exercised. The named-volume mounts sit beside them, commented out.
 
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
@@ -151,7 +151,8 @@ src/Filesystem/                 — SconcurLocalFilesystemAdapter + SconcurLocal
 src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
 src/Support/Coroutine           — whether the caller runs in a coroutine the extension drives
                                   and may still wait in
-src/Support/ProcessMemory       — the resident set size of the process, for memory limits
+src/Support/ProcessMemory       — the resident set size of the process, for memory limits,
+                                  and its proportional share (Pss, SwapPss), for telemetry
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
 src/Tasks/Control/              — stop/restart through a cache key, from any container
@@ -310,8 +311,8 @@ Points worth knowing before changing anything:
   exports neither its `protocol` nor its `connection` module. So neither the flag nor the
   string is reachable from the extension, let alone from this package — changing it means
   patching sqlx. What is reachable is the statement: `WHERE NOT (col <=> ?)` leaves the
-  unchanged rows out, and then matched is changed. Both READMEs say so, and
-  `AffectedRowsTest` pins all three numbers against PDO.
+  unchanged rows out, and then matched is changed. Both halves of `docs/database.md` say
+  so, and `AffectedRowsTest` pins all three numbers against PDO.
 
 ## Tests
 
@@ -401,13 +402,15 @@ only is unfinished.
 act on — and a partial list is worse than none: PHPStan reads `@throws` as exhaustive
 and kills the `catch` blocks for whatever the list left out.
 
-The current state of `src/` is that it throws built-in exceptions directly
-(`RuntimeException` in `AbstractSconcurCommand`, `Database\Mysql\Connection`,
-`Database\Mysql\TransactionStack`, `Tasks\TaskRegistry`; `InvalidArgumentException` in
-`Translation\AsyncTranslator`). The library it integrates with does the opposite — it
-names a class per case under `SConcur\Exceptions\`. Aligning this package with that is
-worth doing but has not been done; write new code the way the surrounding file does
-and do not mass-convert as a side effect of an unrelated change.
+The current state of `src/` is that it mostly throws built-in exceptions directly
+(`RuntimeException` in `AbstractSconcurCommand`, `SConcurServiceProvider`,
+`Servers\MasterFactory`, `Database\Mysql\Connection`, `Database\Mysql\TransactionStack`,
+`Filesystem\SconcurLocalDiskFactory`, `Http\IterableResponseBody`, `Tasks\TaskRegistry`;
+`InvalidArgumentException` in `Redis\Connector` and `Translation\AsyncTranslator`); only
+`src/Redis/Exceptions/` names a class per case. The library it integrates with does the
+opposite — it names a class per case under `SConcur\Exceptions\`. Aligning the rest of
+this package with that is worth doing but has not been done; write new code the way the
+surrounding file does and do not mass-convert as a side effect of an unrelated change.
 
 ## Documentation style
 

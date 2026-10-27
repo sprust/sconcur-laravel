@@ -172,9 +172,9 @@ and resetting that is all there is to restart here.
 At start the pool takes a `flock` on each task separately — `lock_path` plus the task's
 name — and does not come up if even one of them is unavailable. The lock is on the task
 rather than on the process: what must not run twice is the cron, not the pool as such. So
-two entry points with `--only=` work side by side quite happily, `cron:start` in one
-terminal and a monitor in another, while a second cron starts neither in the pool nor as a
-separate command.
+two pools with different `--only=` work side by side quite happily,
+`sconcur:tasks:start --only=cron` in one terminal and `--only=monitor` in another, while a
+second copy of the cron does not start.
 
 `flock` rather than a cache lock, for the same reason the library's master uses it: the
 kernel releases the lock when the process dies, `SIGKILL` included, so there is no stale
@@ -221,9 +221,9 @@ If somebody has not returned within `shutdown_timeout_seconds`, the controller n
 stuck tasks in the log and unwinds the group through `WaitGroup::stop()`. The whole group
 unwinds at once — there is nothing to take a single coroutine down with: `WaitGroup` keeps
 their fiber ids in a protected property, and `Scheduler::detach()` removes a coroutine from
-scheduling without unwinding it, so the `finally` blocks never run. That is why the
-deadline of a selective stop of one task unwinds nothing: it only writes a warning, since
-the other tasks keep working.
+scheduling without unwinding it, so the `finally` blocks never run. That is why a stop of
+one task has no deadline at all: the task parks once its running tick returns, and the
+other tasks keep working.
 
 The deadline has to be smaller than the one given by whoever supervises the pool, otherwise
 the process is always finished off with `SIGKILL` and the graceful path never runs. Under
@@ -252,7 +252,10 @@ The pool is designed to be a group of the master, and that is its normal mode:
 A worker of the group is a fork of the master: it runs `TaskPool` itself, without the
 `sconcur:tasks:start` command, and a non-zero exit code of the pool leaves as the worker's.
 Once its loop runs, the pool tells the master it is up (`Scheduler::markReady()`), so a
-pool that dies at startup is told apart from one that works.
+pool that dies at startup is told apart from one that works. A pool that exits before
+that — a task lock held by a pool started with `sconcur:tasks:start`, for instance — is a
+failed start: when it happens as the master starts, the group's single slot has failed
+before any worker came up, and the master stops every group and exits with code `70`.
 
 `workerCount` is exactly 1, and that is not a formality: `0` means to the master not "none"
 but "one worker per core", and two pools side by side would mean two crons ticking the same
@@ -276,9 +279,9 @@ What PHP can measure: memory — the resident set size from `/proc/self/status`,
 proportional share and the same share of swap (`Pss`, `SwapPss`) from
 `/proc/self/smaps_rollup` — and CPU from the delta of `/proc/self/stat`: the same sources
 and fields the extension reads. Memory is read every five seconds, as the extension reads
-it; the snapshots in between repeat the last reading. What it cannot: the extension
-runtime's memory and its number of live tasks simply do not exist for such a worker and go
-out as zeros.
+it; the snapshots in between repeat the last reading. What it cannot: the number of live
+tasks in the extension's runtime (`runtimeTasks`) simply does not exist for such a worker
+and goes out as zero.
 
 Of the three load sections, `requests` and `connections` are not sent — they belong to the
 server and to the socket server — and a section nobody sent is not put into the reply by
@@ -328,8 +331,8 @@ task that legitimately blocks that long needs the threshold raised past it, or `
 `tasks` group.
 
 A group the panel says nothing about — with the pool stopped, for instance — is drawn in
-with zeros by the application's dashboard so that it does not look non-existent
-(`SconcurStatClient`).
+with zeros by the demo application's dashboard so that it does not look non-existent
+(`demo/app/Telemetry/SconcurStatClient.php`).
 
 ## Preemption
 

@@ -24,8 +24,8 @@ use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 |
 | The three pool sizes come from ScalingSettings rather than straight from ENV, because
 | the demo page can change them: the numbers live in a file both this config and the
-| page can see, and the master picks them up when the task pool rolls the group. Nothing
-| else here is settable at runtime.
+| page can see, and a new master picks them up when the task pool has the old one
+| stopped. Nothing else here is settable at runtime.
 */
 $scaling = ScalingSettings::current();
 
@@ -227,7 +227,8 @@ return [
                 'busy'    => 2,
                 'backoff' => 5,
             ],
-            // Polls for a scaling request from the page and rolls the groups it names.
+            // Polls for a scaling request from the page and stops the master, which
+            // supervisor starts again on the new numbers.
             // One second idle so a change from the page is acted on while the reader is
             // still looking at it.
             [
