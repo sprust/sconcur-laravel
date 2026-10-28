@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "9d0029b8419c419c3c9b1924b46f29e1",
+    "content-hash": "2d30c4bc5f62d61ab13c4af98d9ba768",
     "packages": [
         {
             "name": "brick/math",
@@ -3187,16 +3187,16 @@
         },
         {
             "name": "sconcur/sconcur",
-            "version": "0.18.0",
+            "version": "0.18.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/sprust/sconcur.git",
-                "reference": "c0dd89b837879ced3a5dff602719c958935cf1dc"
+                "reference": "8097454002853f91131e367a311dc33de312ff66"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sprust/sconcur/zipball/c0dd89b837879ced3a5dff602719c958935cf1dc",
-                "reference": "c0dd89b837879ced3a5dff602719c958935cf1dc",
+                "url": "https://api.github.com/repos/sprust/sconcur/zipball/8097454002853f91131e367a311dc33de312ff66",
+                "reference": "8097454002853f91131e367a311dc33de312ff66",
                 "shasum": ""
             },
             "require": {
@@ -3242,9 +3242,9 @@
             "description": "PHP concurrency library backed by an extension written in Rust",
             "support": {
                 "issues": "https://github.com/sprust/sconcur/issues",
-                "source": "https://github.com/sprust/sconcur/tree/v0.18.0"
+                "source": "https://github.com/sprust/sconcur/tree/v0.18.1"
             },
-            "time": "2026-10-27T19:42:49+00:00"
+            "time": "2026-10-28T11:06:50+00:00"
         },
         {
             "name": "symfony/clock",
