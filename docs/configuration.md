@@ -74,7 +74,6 @@ SCONCUR_RABBITMQ_REQUEUE_ON_FAILURE=false
 SCONCUR_RABBITMQ_MAX_MESSAGES=0
 SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS=0
 SCONCUR_RABBITMQ_MAX_MEMORY_BYTES=0
-SCONCUR_RABBITMQ_MEMORY_MB=128
 SCONCUR_RABBITMQ_CONNECTION=sconcur_rabbitmq
 SCONCUR_RABBITMQ_TRIES=1
 SCONCUR_RABBITMQ_BACKOFF=0
@@ -152,7 +151,7 @@ installs the adapters in every process.
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | maximum restart backoff, ms |
 | `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS` | `60000` | how long a worker's PHP thread may stay away from the scheduler before the master kills and replaces it; `0` — off, otherwise at least `5000` |
 | `SCONCUR_HTTP_READY_TIMEOUT_MS` | `30000` | a worker that dies before it says it is up, and within this long, failed to start; at least `1000` |
-| `SCONCUR_HTTP_ACCESS_LOG` | `file` | where the workers write their access lines: `file` (each worker to `<name>-access-YYYY-MM-DD.log` in `logDir`, removed with the journal after `rotateDays`), `stdout` (into the master's journal; one process reads every worker's pipe, and under heavy load lines are dropped), `off` |
+| `SCONCUR_HTTP_ACCESS_LOG` | `file` | where the workers write their access lines: `file` (each worker to `<name>-access-YYYY-MM-DD.log` in `logDir`, removed with the journal after `rotateDays`), `stdout` (into the master's journal; one process reads every worker's pipe, and under heavy load lines are dropped), `off`; a config without the key gets `file` too |
 
 The last seven are the defaults of every group: a group may set any of them for itself, as
 the `tasks` group does with `restartPolicy` and `shutdownTimeoutMs`.
@@ -241,6 +240,11 @@ The `server` block of the `http` group.
 
 How the pool works is in [queue.md](queue.md).
 
+A worker of this group tells the master it is up before its consumer connects, after the
+`WorkerForked` listeners. A broker failure at the start — a queue that is not declared, a
+refused login — is therefore an ordinary restart with backoff, not a failed start, and does
+not stop the master; `SCONCUR_HTTP_READY_TIMEOUT_MS` does not reach it.
+
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_RABBITMQ_WORKER_COUNT` | `0` | processes in the pool; below `1` the group does not reach the master config |
@@ -252,7 +256,6 @@ How the pool works is in [queue.md](queue.md).
 | `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | drain and exit after N messages |
 | `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | drain and exit after N seconds |
 | `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | drain and exit on heap size |
-| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | `memory` of the Laravel `WorkerOptions`, MiB; `Worker::process()` does not check it — the limit that stops a consumer is `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` |
 | `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | the `config/queue.php` connection the jobs run on |
 | `SCONCUR_RABBITMQ_TRIES` | `1` | attempts before `failed_jobs` |
 | `SCONCUR_RABBITMQ_BACKOFF` | `0` | delay before a retry, seconds |

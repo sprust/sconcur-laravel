@@ -19,7 +19,6 @@ usual.
 - [Which connection the application uses](#which-connection-the-application-uses)
 - [Transactions](#transactions)
 - [Differences from PDO](#differences-from-pdo)
-- [Delay and confirms (`config/queue.php`)](#delay-and-confirms-configqueuephp)
 - [Transactions on the PDO connection (important)](#transactions-on-the-pdo-connection-important)
 
 ## Configuration
@@ -169,12 +168,6 @@ explicit `DB::transaction()`.
 Anything a connection is not named for follows `database.default`: `Auth` through the
 eloquent provider, models without a `protected $connection`, the framework's own tables.
 A model that needs different storage names its connection explicitly.
-
-## Delay and confirms (`config/queue.php`)
-
-`confirm_publishes` turns on a confirm for every publish and `confirm_timeout_seconds` is
-how long to wait for it; a delayed publish is confirmed always, regardless of
-`confirm_publishes`, and waits the same `confirm_timeout_seconds`.
 
 ## Transactions on the PDO connection (important)
 

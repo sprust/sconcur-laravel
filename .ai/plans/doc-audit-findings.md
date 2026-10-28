@@ -1,105 +1,71 @@
 # Находки сверки документации с кодом (sconcur 0.18.0)
 
-При сверке всей документации с кодом нашлись места, где неверен не текст, а код. Код не
-трогали; доки описывают то, что код делает сейчас. Ниже — по убыванию важности, с тем, что
-предлагается сделать.
+При сверке всей документации с кодом нашлись места, где неверен был не текст, а код. Все
+пункты ниже исправлены; доки приведены к новому поведению. Открытым остаётся только issue в
+библиотеку (п. 1) и непроверенное из п. 7.
 
-## 1. Отсутствующая очередь роняет весь мастер, HTTP вместе с ним
+## 1. Отсутствующая очередь роняла весь мастер — исправлено
 
-**Что происходит.** Воркер группы `rabbitmq` открывает консьюмеров на старте; если очереди
-нет, брокер отвечает 404 примерно через миллисекунду — раньше, чем `QueueConsumer` сообщит
-мастеру, что поднялся (`Scheduler::markReady()`). Библиотека первое открытие не повторяет,
-воркер выходит с ненулевым кодом. Когда так падают все слоты группы при старте мастера,
-`WorkerGroup::neverCameUp()` останавливает все группы, и `run()` возвращает 70. Supervisor
-(`autorestart=true`) запускает мастер снова — в ту же ошибку. HTTP лежит всё это время.
+Было: консьюмер на неопубликованной очереди получал 404 раньше, чем сообщал мастеру, что
+поднялся; когда так падали все слоты группы, `WorkerGroup::neverCameUp()` останавливал
+мастер с кодом 70, HTTP вместе с ним, а supervisor запускал его в ту же ошибку.
 
-До 0.17 мастер перезапускал только консьюмер с растущим backoff, HTTP жил.
+Сделано: роль `rabbitmq` (`src/Servers/WorkerRoles.php`) вызывает
+`Scheduler::get()->markReady()` до `consume()`. Падение теперь обычный перезапуск с
+backoff, мастер и HTTP живут. Цена: группа, которая не поднимется никогда, не остановит
+мастер кодом 70, ошибка брокера видна только в журнале воркера. Слушатели `WorkerForked`
+по-прежнему выполняются до `markReady()`, так что их исключение — всё ещё неудачный старт.
+Тест: `MasterRunTest::aQueueThatIsNotDeclaredDoesNotStopTheMaster` (без правки падает с
+`stopping with code 70`). Доки: `docs/queue*.md`.
 
-**Проверено:** standalone-консьюмер против несуществующей очереди — 404 через ~1 мс после
-старта. Путь до кода 70 под мастером выведен из кода, живьём не гонялся.
+Issue в библиотеку (не заведён):
 
-**Варианты:**
-- Объявлять очереди из `MasterStartCommand` перед `run()`. Не подходит: объявление идёт
-  через фичу AMQP, это асинхронный вызов в процессе мастера, и после него fork запрещён.
-  `sconcur:rabbitmq:declare` уже стоит в entrypoint workers-контейнера и в `make setup`, но
-  приложение, которое его пропустило, падает целиком.
-- В роли `rabbitmq` вызывать `Scheduler::get()->markReady()` до `consume()`. Воркер
-  считается поднявшимся, его падения идут в обычный crash-loop с backoff, мастер и HTTP
-  живут — поведение как до 0.17. Цена: группа, которая не поднимется никогда, не
-  остановит мастер с кодом 70, и ошибка брокера видна только в журнале.
-- Попросить библиотеку: повтор первого открытия в `QueueConsumer` с паузой, или политику
-  группы «не останавливать мастер, если не поднялась».
+> `QueueConsumer::consume()` does not retry the first open. A consumer on a queue that
+> does not exist gets `404 NOT_FOUND` about a millisecond after start, before
+> `Scheduler::markReady()`, so under `WorkerMaster` every slot counts as a failed start and
+> `neverCameUp()` stops the whole master — every other group included — with code 70.
+> Suggestions: retry the first open with a pause, or a group policy "do not stop the master if this group never came up".
+> `docs/amqp.md` ("A supervised consumer") still says the consumer is "restarted over and
+> over", which is no longer what happens.
 
-Предлагается второй вариант на стороне пакета сейчас и issue в библиотеку. В доке
-библиотеки (`docs/amqp.md`, «A supervised consumer») всё ещё написано, что консьюмер
-«restarted over and over» — это тоже в issue.
+## 2. `SCONCUR_RABBITMQ_MEMORY_MB` ничего не делал — удалён
 
-## 2. `SCONCUR_RABBITMQ_MEMORY_MB` ничего не делает
+Ключ `sconcur.queue.rabbitmq.memory_mb` и переменная убраны из скелета, demo, workbench,
+`ConsumerRunner` и `docs/configuration*.md`. Рабочий лимит —
+`SCONCUR_RABBITMQ_MAX_MEMORY_BYTES`. Опубликованный ранее конфиг с ключом не ломается: его
+просто никто не читает.
 
-`config('sconcur.queue.rabbitmq.memory_mb')` уходит в `WorkerOptions::$memory`
-(`src/Queue/Rabbitmq/ConsumerRunner.php`), но проверяет его только `Worker::daemon()`, а
-`ConsumerRunner` вызывает `Worker::process()`. Работающий лимит —
-`SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` (`maxMemoryBytes` консьюмера). Доки уже это говорят.
+## 3. `response()->eventStream()` стримился без разметки — исправлено
 
-**Сделать:** убрать ключ и переменную (конфиг, demo, workbench, доки) либо проверять лимит
-в `ConsumerRunner` между доставками. Скорее убрать: дублирует `maxMemoryBytes`.
+`src/Http/StreamedChunks.php` узнаёт замыкание `eventStream()` по `$endStreamWith` рядом с
+`$callback` и отдаёт события по одному на кусок, размеченные так же, как их печатает
+`ResponseFactory::eventStream()` (`StreamedEvent`, `Js::encode`, закрывающее событие).
+`connection_aborted()` не повторяется: ушедший клиент обрывает чтение генератора сам.
+Тест: `StreamedResponseTest::laravelsEventStreamIsReadAnEventPerChunk` сравнивает байты с
+нативным выводом замыкания. Доки: `docs/http*.md`, `.ai/README.md`.
 
-## 3. `response()->eventStream()` стримится неверно
+## 4. `Redis::disconnect()` уходил на сервер командой — исправлено
 
-`src/Http/StreamedChunks.php` принимает `eventStream()` за генераторную форму
-`response()->stream()`: его замыкание объявлено в `ResponseFactory` и держит генератор
-пользователя в `$callback`. В итоге в сеть уходят сырые сообщения пользователя — без
-`event:`/`data:`, без завершающего `</stream>`; массив или `StreamedEvent` в сообщении
-обрывает тело `UnexpectedValueException`. Подтверждено в контейнере:
-`StreamedChunks::of($factory->eventStream(fn () => yield ...))` отдаёт сырые сообщения.
-Доки (`docs/http.md`) говорят, что `eventStream` отдаётся целиком — это задуманное
-поведение, код ему не соответствует.
+`SConcur\Laravel\Redis\Connection::disconnect()` ничего не делает: сокета у объекта нет,
+пул dsn общий на процесс, и закрывать его библиотека не даёт (закрывает сама по простою).
+Тест: `FacadeTest::disconnectSendsNothingAndLeavesTheConnectionWorking` (без правки —
+`ERR unknown command 'DISCONNECT'`). Доки: таблица отличий в `docs/redis*.md`.
+`RedisManager::purge()` в `MasterStartCommand` и раньше `disconnect()` не звал.
 
-**Сделать:** отличать замыкание `eventStream()` (по его переменным / scope) и либо отдавать
-целиком, либо стримить с SSE-разметкой; тест в `StreamedResponseTest`.
+## 5. Пустой `disconnect()` у `sconcur_mysql` — оставлен, объяснён в докблоке
 
-## 4. `Redis::disconnect()` на клиенте `sconcur` уходит на сервер командой
+## 6. `accessLog` вне опубликованного конфига — теперь `file`
 
-У `PhpRedisConnection` есть `disconnect()`, у `SConcur\Laravel\Redis\Connection` — нет,
-поэтому вызов идёт через `__call` и отправляется как команда `DISCONNECT`. Внутри
-Laravel и пакета его никто не вызывает; живьём не проверялось.
-
-**Сделать:** добавить `disconnect()` (закрыть/забыть клиента), кейс в `FacadeTest` или
-`PhpRedisParityTest`.
-
-## 5. `disconnect()` у `sconcur_mysql` — пустой
-
-`src/Database/Mysql/Connection.php::disconnect()` ничего не делает, так что
-`MasterStartCommand::closeConnections()` для `sconcur_mysql` фактически ничего не
-закрывает. Безвредно, пока мастер не выполнил запрос до `run()` (а выполнить его он и не
-может — это асинхронный вызов, и fork был бы запрещён). Для PDO-соединения `mysql`
-закрытие работает.
-
-**Сделать:** решить, что значит disconnect для пула фичи (забыть пул в процессе?), либо
-оставить и написать в докблоке, почему пусто.
-
-## 6. `accessLog` вне опубликованного конфига — `stdout`
-
-`MasterFactory` без ключа `accessLog` берёт `AccessLogTarget::Stdout` (умолчание
-библиотеки), а скелет `config/sconcur.php` ставит `file`. Приложение, опубликовавшее конфиг
-до появления ключа, получит `stdout`. Конфиг публикуется, а не мержится, так что это
-формально верно; но умолчание пакета лучше держать в одном месте.
-
-**Сделать:** fallback в `MasterFactory` на `file`, либо оставить и упомянуть в доке
-обновления.
+`MasterFactory` берёт `AccessLogTarget::File`, как скелет. Тест:
+`MasterConfigTest::withoutAnAccessLogKeyTheAccessLogGoesToAFile`.
 
 ## 7. Мелочи
 
-- `sconcur:extension:load` без аргумента падает на свежем приложении: каталога
-  `servers/sconcur` нет; если есть `servers/`, но нет `servers/sconcur`, `.so` пишется
-  файлом с именем `servers/sconcur`. Создавать каталог или требовать аргумент.
-- `TaskPoolController::finished()`: ветка «ещё внутри тика после дедлайна» недостижима —
-  дедлайн всегда ставится вместе с полной остановкой. Убрать или покрыть.
-- Раздел «Delay and confirms (`config/queue.php`)» лежит в `docs/database*.md`, хотя он про
-  RabbitMQ; перенести в `docs/queue*.md`, где `confirm_publishes` и
-  `confirm_timeout_seconds` не упомянуты вовсе.
-- В установочном `.env` минимум для мастера стоит `SCONCUR_PANEL_HOST`, который мастеру не
-  нужен (его читает только демо).
+- `sconcur:extension:load` без аргумента создаёт `servers/sconcur` — сделано.
+- `TaskPoolController::finished()`: недостижимая ветка удалена — дедлайн ставят только
+  `requestStop()` и повторный сигнал, оба при `stopRequested`, который не сбрасывается.
+- Раздел про confirms перенесён из `docs/database*.md` в «The connection» `docs/queue*.md`.
+- `SCONCUR_PANEL_HOST` убран из минимального `.env` в `docs/installation*.md`.
 - Не проверено: версии `laravel-echo` 2.4.0 / `pusher-js` 8.6.0 в `docs/websocket*.md`
   (в репозитории нет `package.json`), segfault при preemption внутри `ob_start`, замер
   «39 из 40», внутренности sqlx/redis-rs, происхождение таблицы префиксов из `MONITOR`.

@@ -170,9 +170,8 @@ return [
                 env('SCONCUR_RABBITMQ_QUEUE', 'demo'),
             ],
 
-            'tries'     => (int) env('SCONCUR_RABBITMQ_TRIES', 3),
-            'backoff'   => (int) env('SCONCUR_RABBITMQ_BACKOFF', 0),
-            'memory_mb' => (int) env('SCONCUR_RABBITMQ_MEMORY_MB', 128),
+            'tries'   => (int) env('SCONCUR_RABBITMQ_TRIES', 3),
+            'backoff' => (int) env('SCONCUR_RABBITMQ_BACKOFF', 0),
         ],
     ],
 

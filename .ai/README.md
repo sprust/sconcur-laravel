@@ -284,8 +284,9 @@ Points worth knowing before changing anything:
   key/value, the phpredis signatures read their option arrays, the rest refuse a map.
 - **Only a StreamedResponse built from chunks is streamed.** `Http\StreamedChunks` recognises
   Symfony's `StreamedResponse($iterable)` (the closure's `$chunks`), Laravel's
-  `response()->stream()` over a generator function (the closure's `$callback`) and a
-  generator callback; those go to `IterableResponseBody`, which advances the generator in the
+  `response()->stream()` over a generator function (the closure's `$callback`), its
+  `eventStream()` (the same plus `$endStreamWith`; the chunks are framed as Laravel's closure
+  frames them) and a generator callback; those go to `IterableResponseBody`, which advances the generator in the
   request coroutine — a generator runs on the stack of whoever advances it, so no fiber, no
   output buffer, a chunk per `yield`, and `Kernel::terminate()` after the last one. The
   closure variables are Symfony's and Laravel's internals: when they change, the shape is no

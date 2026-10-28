@@ -73,7 +73,6 @@ SCONCUR_RABBITMQ_REQUEUE_ON_FAILURE=false
 SCONCUR_RABBITMQ_MAX_MESSAGES=0
 SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS=0
 SCONCUR_RABBITMQ_MAX_MEMORY_BYTES=0
-SCONCUR_RABBITMQ_MEMORY_MB=128
 SCONCUR_RABBITMQ_CONNECTION=sconcur_rabbitmq
 SCONCUR_RABBITMQ_TRIES=1
 SCONCUR_RABBITMQ_BACKOFF=0
@@ -151,7 +150,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | макс. backoff рестарта, мс |
 | `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS` | `60000` | сколько PHP-поток воркера может не возвращаться в планировщик, прежде чем мастер убьёт и заменит воркер; `0` — выкл, иначе не меньше `5000` |
 | `SCONCUR_HTTP_READY_TIMEOUT_MS` | `30000` | воркер, умерший раньше, чем сообщил, что поднялся, и в пределах этого времени, не стартовал; не меньше `1000` |
-| `SCONCUR_HTTP_ACCESS_LOG` | `file` | куда воркеры пишут строки access-лога: `file` (каждый воркер в `<name>-access-YYYY-MM-DD.log` в `logDir`, удаляется вместе с журналом через `rotateDays`), `stdout` (в журнал мастера; трубы всех воркеров читает один процесс, и под большой нагрузкой строки теряются), `off` |
+| `SCONCUR_HTTP_ACCESS_LOG` | `file` | куда воркеры пишут строки access-лога: `file` (каждый воркер в `<name>-access-YYYY-MM-DD.log` в `logDir`, удаляется вместе с журналом через `rotateDays`), `stdout` (в журнал мастера; трубы всех воркеров читает один процесс, и под большой нагрузкой строки теряются), `off`; конфиг без этого ключа тоже получает `file` |
 
 Последние семь — значения по умолчанию для каждой группы: группа может задать любое из
 них сама, как группа `tasks` задаёт `restartPolicy` и `shutdownTimeoutMs`.
@@ -240,6 +239,11 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 
 Как устроен пул — в [queue.ru.md](queue.ru.md).
 
+Воркер этой группы сообщает мастеру, что поднялся, до того как консьюмер подключается, —
+после слушателей `WorkerForked`. Поэтому отказ брокера на старте — необъявленная очередь,
+отвергнутый логин — обычный перезапуск с backoff, а не неудачный старт, и мастер он не
+останавливает; `SCONCUR_HTTP_READY_TIMEOUT_MS` его не касается.
+
 | ENV | Дефолт | Назначение |
 |---|---|---|
 | `SCONCUR_RABBITMQ_WORKER_COUNT` | `0` | процессов в пуле; меньше `1` — группа не попадает в конфиг мастера |
@@ -251,7 +255,6 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 | `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | дренировать и выйти после N сообщений |
 | `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | дренировать и выйти через N секунд |
 | `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | дренировать и выйти по размеру кучи |
-| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | `memory` в `WorkerOptions` Laravel, МиБ; `Worker::process()` его не проверяет — консьюмер останавливает лимит `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` |
 | `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | соединение `config/queue.php`, на котором идут джобы |
 | `SCONCUR_RABBITMQ_TRIES` | `1` | попыток до `failed_jobs` |
 | `SCONCUR_RABBITMQ_BACKOFF` | `0` | пауза перед повтором, секунд |

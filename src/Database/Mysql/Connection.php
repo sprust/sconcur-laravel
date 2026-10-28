@@ -372,7 +372,15 @@ class Connection extends MySqlConnection
         return $this;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     *
+     * Nothing to close, for the same reason: the connections are the extension's pool,
+     * which this object does not hold. DatabaseManager::purge() still forgets the object,
+     * and that is all MasterStartCommand needs — the master cannot have opened the pool,
+     * since a query is an asynchronous call and the extension refuses to fork a process
+     * that has made one.
+     */
     public function disconnect()
     {
         //

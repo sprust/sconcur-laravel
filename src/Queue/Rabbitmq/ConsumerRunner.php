@@ -50,6 +50,8 @@ readonly class ConsumerRunner
      * `timeout` is deliberately left at zero: the deadline on a job belongs to the consumer
      * runtime's handlerTimeoutMs, which unwinds the coroutine, rather than to the worker's
      * SIGALRM, which would take the process down with every other handler running in it.
+     * `memory` is not set at all: only daemon() reads it, and the limit that stops a
+     * consumer is its own maxMemoryBytes.
      */
     public static function configured(
         QueueConsumer $consumer,
@@ -64,7 +66,6 @@ readonly class ConsumerRunner
             connectionName: $connectionName ?? (string) ($config['connection'] ?? 'sconcur_rabbitmq'),
             options: new WorkerOptions(
                 backoff: $backoff ?? (int) ($config['backoff'] ?? 0),
-                memory: (int) ($config['memory_mb'] ?? 128),
                 timeout: 0,
                 maxTries: $tries ?? (int) ($config['tries'] ?? 1),
             ),

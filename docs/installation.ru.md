@@ -108,7 +108,6 @@ SCONCUR_HTTP_WORKER_COUNT=2
 # telemetry panel: an empty token turns it off
 SCONCUR_HTTP_PANEL_PORT=28081
 SCONCUR_HTTP_ADMIN_TOKEN=change-me
-SCONCUR_PANEL_HOST=http://127.0.0.1:28081/api/stats
 
 # the consumer pool: below 1 leaves the group out of the master config entirely
 SCONCUR_RABBITMQ_WORKER_COUNT=0

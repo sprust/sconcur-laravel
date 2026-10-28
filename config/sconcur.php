@@ -289,9 +289,8 @@ return [
             // Attempts before Worker::process() writes the job to failed_jobs, and the
             // delay it releases with. Both are the defaults; a job's own $tries and
             // $backoff win over them.
-            'tries'     => (int) env('SCONCUR_RABBITMQ_TRIES', 1),
-            'backoff'   => (int) env('SCONCUR_RABBITMQ_BACKOFF', 0),
-            'memory_mb' => (int) env('SCONCUR_RABBITMQ_MEMORY_MB', 128),
+            'tries'   => (int) env('SCONCUR_RABBITMQ_TRIES', 1),
+            'backoff' => (int) env('SCONCUR_RABBITMQ_BACKOFF', 0),
         ],
     ],
     /*

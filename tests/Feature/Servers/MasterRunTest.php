@@ -95,6 +95,34 @@ class MasterRunTest extends BaseTestCase
         self::assertSame(0, $this->exitCode(), (string) file_get_contents($this->output));
     }
 
+    /**
+     * The broker refuses a consumer on a queue nobody declared within a millisecond, before
+     * the consumer would have said it is up. Counted as a failed start, every slot of the
+     * group failing that way would stop the master and every other group with it. The
+     * `rabbitmq` role says so itself, so the failure is an ordinary restart and HTTP stays.
+     */
+    #[Test]
+    public function aQueueThatIsNotDeclaredDoesNotStopTheMaster(): void
+    {
+        $this->startMaster([
+            'SCONCUR_RABBITMQ_WORKER_COUNT' => '1',
+            'SCONCUR_RABBITMQ_QUEUE'        => uniqid('undeclared_'),
+        ]);
+
+        $this->waitFor(
+            condition: fn(): bool => $this->httpStatusCode() > 0,
+            what: 'the http workers to answer',
+        );
+
+        $this->waitFor(
+            condition: fn(): bool => substr_count((string) file_get_contents($this->output), 'rabbitmq #0]: exited') > 1,
+            what: 'the rabbitmq worker to fail and be started again',
+        );
+
+        self::assertTrue($this->masterControl()->isRunning(), (string) file_get_contents($this->output));
+        self::assertGreaterThan(0, $this->httpStatusCode());
+    }
+
     #[Test]
     public function aMasterThatDoesNotRunIsReportedAsStopped(): void
     {
@@ -123,13 +151,17 @@ class MasterRunTest extends BaseTestCase
         $this->command('sconcur:servers:master:status')->run();
     }
 
-    private function startMaster(): void
+    /**
+     * @param array<string, string> $environment added to the child's, over this process's own
+     */
+    private function startMaster(array $environment = []): void
     {
         // The container's own CACHE_STORE names a store the workbench does not define;
         // phpunit.xml sets `array` for this process only, so the child is told the same.
         $environment = [
             ...getenv(),
             'CACHE_STORE' => 'array',
+            ...$environment,
         ];
 
         $process = proc_open(

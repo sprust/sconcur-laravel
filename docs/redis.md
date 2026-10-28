@@ -211,6 +211,7 @@ Where it differs from phpredis on purpose:
 | a refused command answers `false` and keeps the reason in `getLastError()` | `RedisCommandException` | `false` from `incr` or `hget` would read as an answer, and a `WRONGTYPE` as a missing key |
 | `scan($cursor)` moves the cursor through a reference | `scan()`, `hscan()`, `sscan()` and `zscan()` answer `[cursor, items]`, items folded into a map for `hscan`/`zscan` | a facade call cannot carry a reference |
 | a status reply a Lua script returns is `true` | the string `'OK'` | the feature hands a status and a bulk string over alike |
+| `disconnect()` closes the socket | does nothing | the connections belong to the extension's pool for the dsn, shared by the whole process, and it closes an unused pool itself |
 
 One connection object serves every coroutine of the process: it holds no socket and no
 state of its own.

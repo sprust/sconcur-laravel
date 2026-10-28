@@ -63,7 +63,7 @@ class MasterConfigTest extends BaseTestCase
             'restartPolicy'     => 'always',
             'shutdownTimeoutMs' => 7000,
             'readyTimeoutMs'    => 2000,
-            'accessLog'         => 'file',
+            'accessLog'         => 'off',
             'env'               => [
                 'APP_ROLE'  => 'master',
                 'LOG_LEVEL' => 'info',
@@ -92,7 +92,7 @@ class MasterConfigTest extends BaseTestCase
         self::assertSame(RestartPolicy::Always, $groups[0]->restartPolicy);
         self::assertSame(7000, $groups[0]->shutdownTimeoutMs);
         self::assertSame(2000, $groups[0]->readyTimeoutMs);
-        self::assertSame(AccessLogTarget::File, $groups[0]->accessLog);
+        self::assertSame(AccessLogTarget::Off, $groups[0]->accessLog);
 
         self::assertSame(RestartPolicy::OnFailure, $groups[1]->restartPolicy);
         self::assertSame(30000, $groups[1]->shutdownTimeoutMs);
@@ -101,6 +101,26 @@ class MasterConfigTest extends BaseTestCase
         // value wins, and every value reaches the library as a string.
         self::assertSame(['APP_ROLE' => 'master', 'LOG_LEVEL' => 'info'], $groups[0]->env);
         self::assertSame(['APP_ROLE' => 'tasks', 'LOG_LEVEL' => 'info', 'TICK' => '1'], $groups[1]->env);
+    }
+
+    /**
+     * A config published before the key existed has no `accessLog`, and gets what the
+     * skeleton sets rather than the library's `stdout`, which drops lines under load.
+     */
+    #[Test]
+    public function withoutAnAccessLogKeyTheAccessLogGoesToAFile(): void
+    {
+        $groups = $this->groupConfigs($this->workerMaster([
+            'runtimeDir' => sys_get_temp_dir(),
+            'groups'     => [
+                [
+                    'name' => 'http',
+                    'role' => 'http',
+                ],
+            ],
+        ]));
+
+        self::assertSame(AccessLogTarget::File, $groups[0]->accessLog);
     }
 
     #[Test]

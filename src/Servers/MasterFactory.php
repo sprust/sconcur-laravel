@@ -92,7 +92,7 @@ readonly class MasterFactory
             maxRestartBackoffMs: (int) $setting('maxRestartBackoffMs', 30_000),
             watchdogTimeoutMs: (int) $setting('watchdogTimeoutMs', 60_000),
             readyTimeoutMs: (int) $setting('readyTimeoutMs', 30_000),
-            accessLog: AccessLogTarget::from((string) $setting('accessLog', AccessLogTarget::Stdout->value)),
+            accessLog: AccessLogTarget::from((string) $setting('accessLog', AccessLogTarget::File->value)),
             env: array_map(
                 strval(...),
                 [

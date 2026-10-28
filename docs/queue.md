@@ -27,11 +27,11 @@ What happens if it is skipped:
 - the pool doing `basic.consume` on a queue that does not exist gets
   `SConcur\Exceptions\Amqp\QueueException` reading
   `Server channel error: 404, message: NOT_FOUND - no queue 'default' in vhost '/'`.
-  The first open is not retried: the worker exits non-zero before it says it is up. Once
-  every slot of the `rabbitmq` group has failed that way at the master's start, the master
-  stops all its groups, HTTP included, and exits with code `70`
-  (`group rabbitmq: no worker came up — …; stopping with code 70`); supervisor starts it
-  again, and it fails the same way.
+  The first open is not retried: the worker exits non-zero, and the master starts it again
+  with a growing pause, up to `maxRestartBackoffMs`, for as long as the queue is missing.
+  The `rabbitmq` role tells the master it is up before the consumer opens, so this failure
+  is an ordinary restart rather than a failed start: the master and its other groups, HTTP
+  included, keep running, and the broker's error shows only in the worker's log.
 
 The command declares what is listed in `sconcur.queue.rabbitmq.queues`, with the flags
 `durable`, not `exclusive`, not `autoDelete` and no arguments — the same ones
@@ -62,9 +62,11 @@ Three things hold that together, and none of them can be changed unilaterally:
 ```php
 // config/queue.php
 'sconcur_rabbitmq' => [
-    'driver'    => 'sconcur_rabbitmq',
-    'queue'     => env('RABBITMQ_QUEUE', 'default'),
-    'dsn'       => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'driver'                  => 'sconcur_rabbitmq',
+    'queue'                   => env('RABBITMQ_QUEUE', 'default'),
+    'dsn'                     => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'confirm_publishes'       => false,
+    'confirm_timeout_seconds' => 5.0,
 ],
 ```
 
@@ -85,6 +87,11 @@ A delayed publish always goes through `publishConfirmed`, whatever the connectio
 say: an ordinary publish on a routing key nothing is bound to is silently discarded by the
 broker — while `publishConfirmed` is mandatory by default and throws
 `UnroutableMessageException`.
+
+`confirm_publishes` (`false` by default) sends every other publish through
+`publishConfirmed` as well, at the cost of a round trip to the broker per publish.
+`confirm_timeout_seconds` (`5.0` by default) is how long a confirmed publish, delayed or
+not, waits for the broker's confirm.
 
 ## The consumer
 

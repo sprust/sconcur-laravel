@@ -27,11 +27,11 @@
 - пул на `basic.consume` несуществующей очереди получает
   `SConcur\Exceptions\Amqp\QueueException` с текстом
   `Server channel error: 404, message: NOT_FOUND - no queue 'default' in vhost '/'`.
-  Первое открытие не повторяется: воркер выходит с ненулевым кодом раньше, чем сообщит,
-  что поднялся. Когда так упали все слоты группы `rabbitmq` при старте мастера, мастер
-  останавливает все свои группы, HTTP тоже, и выходит с кодом `70`
-  (`group rabbitmq: no worker came up — …; stopping with code 70`); supervisor запускает
-  его снова, и он падает так же.
+  Первое открытие не повторяется: воркер выходит с ненулевым кодом, и мастер запускает его
+  снова с растущей паузой, до `maxRestartBackoffMs`, пока очереди нет. Роль `rabbitmq`
+  сообщает мастеру, что поднялась, до того как консьюмер открывается, поэтому такой отказ —
+  обычный перезапуск, а не неудачный старт: мастер и остальные его группы, HTTP тоже,
+  продолжают работать, а ошибка брокера видна только в журнале воркера.
 
 Команда объявляет то, что перечислено в `sconcur.queue.rabbitmq.queues`, флагами
 `durable`, не `exclusive`, не `autoDelete`, без аргументов — теми же, что и
@@ -61,9 +61,11 @@
 ```php
 // config/queue.php
 'sconcur_rabbitmq' => [
-    'driver'    => 'sconcur_rabbitmq',
-    'queue'     => env('RABBITMQ_QUEUE', 'default'),
-    'dsn'       => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'driver'                  => 'sconcur_rabbitmq',
+    'queue'                   => env('RABBITMQ_QUEUE', 'default'),
+    'dsn'                     => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'confirm_publishes'       => false,
+    'confirm_timeout_seconds' => 5.0,
 ],
 ```
 
@@ -87,6 +89,11 @@
 соединения: обычная публикация на routing key, к которому никто не привязан, молча
 выбрасывается брокером — а `publishConfirmed` по умолчанию mandatory и бросает
 `UnroutableMessageException`.
+
+`confirm_publishes` (по умолчанию `false`) отправляет через `publishConfirmed` и все
+остальные публикации — ценой одного обращения к брокеру на каждую. `confirm_timeout_seconds`
+(по умолчанию `5.0`) — сколько подтверждённая публикация, отложенная или нет, ждёт
+подтверждения брокера.
 
 ## Консьюмер
 

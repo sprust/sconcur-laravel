@@ -7,7 +7,7 @@ namespace SConcur\Laravel\Console;
 /**
  * Download the sconcur extension (.so) matching the package version by
  * running the library downloader (vendor/bin/sconcur-load) and streaming its
- * output. The target defaults to servers/sconcur.
+ * output. The target defaults to the servers/sconcur directory, created when missing.
  */
 class ExtensionLoadCommand extends AbstractSconcurCommand
 {
@@ -21,7 +21,20 @@ class ExtensionLoadCommand extends AbstractSconcurCommand
         $bin  = base_path('vendor/bin/sconcur-load');
         $path = $this->argument('path');
 
-        $target = is_string($path) && $path !== '' ? $path : base_path('servers/sconcur');
+        if (is_string($path) && $path !== '') {
+            $target = $path;
+        } else {
+            $target = base_path('servers/sconcur');
+
+            // The default names a directory, and the downloader takes a path that is not
+            // one for the file to write: servers/sconcur would become the .so itself, or
+            // fail without servers/.
+            if (!is_dir($target) && !@mkdir($target, 0755, true) && !is_dir($target)) {
+                $this->error(sprintf('Cannot create the directory %s', $target));
+
+                return self::FAILURE;
+            }
+        }
 
         $command = sprintf(
             '%s %s %s',

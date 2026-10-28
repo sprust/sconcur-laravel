@@ -9,6 +9,8 @@ use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\StreamedEvent;
+use Illuminate\Routing\ResponseFactory as RoutingResponseFactory;
 use Illuminate\Support\Facades\Route;
 use Laminas\Diactoros\ResponseFactory;
 use Laminas\Diactoros\ServerRequest;
@@ -120,6 +122,8 @@ class StreamedResponseTest extends BaseTestCase
             });
         });
 
+        Route::get('workbench/event-stream', static fn(): StreamedResponse => self::eventStream());
+
         Route::get('workbench/chunks-octane', static fn(): StreamedResponse => new StreamedResponse()->setCallback(
             static function (): Generator {
                 yield 'a';
@@ -219,6 +223,46 @@ class StreamedResponseTest extends BaseTestCase
     {
         self::assertSame(['a', 'b'], $this->readChunks('/workbench/chunks-laravel'));
         self::assertSame(['terminated'], self::$events);
+    }
+
+    /**
+     * The events arrive one per chunk, and together they are the bytes Laravel's own
+     * callback prints for the same messages: the framing, the JSON of a message that is not
+     * a string, a named event and the closing one.
+     */
+    #[Test]
+    public function laravelsEventStreamIsReadAnEventPerChunk(): void
+    {
+        $chunks = $this->readChunks('/workbench/event-stream');
+
+        $printed = '';
+
+        $callback = self::eventStream()->getCallback();
+
+        self::assertNotNull($callback);
+
+        ob_start(static function (string $buffer) use (&$printed): string {
+            $printed .= $buffer;
+
+            return '';
+        });
+
+        try {
+            $callback();
+        } finally {
+            ob_end_flush();
+        }
+
+        self::assertSame(
+            [
+                "event: update\ndata: a\n\n",
+                "event: update\ndata: {\"b\":1}\n\n",
+                "event: tick\ndata: c\n\n",
+                "event: update\ndata: </stream>\n\n",
+            ],
+            $chunks,
+        );
+        self::assertSame($printed, implode('', $chunks));
     }
 
     #[Test]
@@ -465,6 +509,24 @@ class StreamedResponseTest extends BaseTestCase
         });
 
         return $chunks;
+    }
+
+    private static function eventStream(): StreamedResponse
+    {
+        /** @var RoutingResponseFactory $responseFactory */
+        $responseFactory = response();
+
+        return $responseFactory->eventStream(static function (): Generator {
+            yield 'a';
+
+            Sleeper::usleep(1000);
+
+            yield ['b' => 1];
+            yield new StreamedEvent(
+                event: 'tick',
+                data: 'c',
+            );
+        });
     }
 
     private static function recordTermination(): void

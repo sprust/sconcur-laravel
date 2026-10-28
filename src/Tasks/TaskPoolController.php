@@ -285,17 +285,8 @@ class TaskPoolController
 
         $deadline = $this->state->hardDeadlineAt();
 
+        // Only a full stop sets the deadline, so past it the whole group is unwound.
         if ($deadline === null || microtime(true) < $deadline) {
-            return false;
-        }
-
-        if (!$this->state->isStopRequested()) {
-            // A deadline without a full stop belongs to a single task that would not
-            // let go. Unwinding the group would take the others with it, so this is
-            // reported and left alone.
-            $this->log('still inside a tick past the deadline: ' . implode(', ', $running));
-            $this->state->setHardDeadlineAt(microtime(true) + $this->options->shutdownTimeoutSeconds);
-
             return false;
         }
 

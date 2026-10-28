@@ -577,6 +577,16 @@ class Connection extends BaseConnection
     }
 
     /**
+     * PhpRedisConnection closes its socket here. This object holds none: the extension keeps
+     * the connections of a dsn in one pool for the whole process, shared with every other
+     * connection on that dsn, and closes the pool itself once it goes unused. There is
+     * nothing to close, and the call is not sent to the server as a command.
+     */
+    public function disconnect(): void
+    {
+    }
+
+    /**
      * The one way a command goes out: refused if the feature has no path for it, given the
      * prefix on its keys, given the deadline its wait needs, reported to the events, and
      * answered in phpredis's shape.

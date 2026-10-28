@@ -113,9 +113,8 @@ return [
                 env('SCONCUR_RABBITMQ_QUEUE', 'tests'),
             ],
 
-            'tries'     => 1,
-            'backoff'   => 0,
-            'memory_mb' => 128,
+            'tries'   => 1,
+            'backoff' => 0,
         ],
     ],
 
