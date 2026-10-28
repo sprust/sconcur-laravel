@@ -19,7 +19,6 @@ usual.
 - [Which connection the application uses](#which-connection-the-application-uses)
 - [Transactions](#transactions)
 - [Differences from PDO](#differences-from-pdo)
-- [Delay and confirms (`config/queue.php`)](#delay-and-confirms-configqueuephp)
 - [Transactions on the PDO connection (important)](#transactions-on-the-pdo-connection-important)
 
 ## Configuration
@@ -63,6 +62,9 @@ and passed to the extension; where the array has none, the extension's own defau
 `max_open_conns` is the one default the package overrides, and a bounded pool is not
 caution: every concurrent statement takes a connection of its own, so an unbounded pool
 walks a fan-out straight into the server's `max_connections` (MySQL error 1040).
+The cap is per worker process: every worker opens a pool of its own, so the server sees
+up to `max_open_conns` times the number of workers that query it. Divide what
+`max_connections` leaves after the other clients by that number.
 
 ## Which connection the application uses
 
@@ -115,8 +117,8 @@ a coroutine it has one manager of its own and behaves indistinguishably from the
 one. Without it, a single per-process singleton would key its records by connection name
 rather than by whoever opened the transaction, and one coroutine's commit would run a
 neighbour's `afterCommit` while that neighbour's transaction was still open.
-`Model::saveOrFail()` is a transaction, so creating a model the ordinary way already lands
-there.
+`Model::saveOrFail()` is a transaction, so a model saved through it lands there without an
+explicit `DB::transaction()`.
 
 ## Differences from PDO
 
@@ -153,16 +155,6 @@ there.
 - `selectResultSets()` is not supported: the feature returns one result set per query.
 - Rows always arrive as `stdClass` — that is Laravel's default `fetchMode`, and the
   connection does not let it be changed anyway.
-- **Column order within a row is not guaranteed.** PDO returns them in `SELECT` order;
-  here a row crosses the PHP↔extension boundary as a msgpack map, and a map does not
-  preserve key order — so two identical queries in a row give different field orders.
-  Reading by name
-  works as usual, so the ORM, `->id`, `->toArray()` and `where` never notice. What does
-  notice is whatever relies on the order: `array_values($row)`, destructuring
-  `[$a, $b] = array_values(...)`, `fputcsv` of a row as-is, comparing two rows with `==`
-  on arrays, and `json_encode` of an API response — the JSON keys will shuffle from one
-  request to the next. If the order matters, set it yourself: list the fields when
-  building the response rather than handing over the whole row.
 - Read/write splitting (`read`/`write`/`sticky`) is not supported — the feature has one
   DSN.
 - `pretend()` keeps its flag in the shared object: it must not be used in a coroutine
@@ -176,11 +168,6 @@ there.
 Anything a connection is not named for follows `database.default`: `Auth` through the
 eloquent provider, models without a `protected $connection`, the framework's own tables.
 A model that needs different storage names its connection explicitly.
-
-## Delay and confirms (`config/queue.php`)
-
-`confirm_publishes` turns on a confirm for every publish and `confirm_timeout_seconds` is
-how long to wait for it; a delayed publish is confirmed always, regardless of both.
 
 ## Transactions on the PDO connection (important)
 

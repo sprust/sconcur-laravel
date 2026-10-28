@@ -37,7 +37,7 @@ own. Everything else is here:
 | Delivery between processes | `src/Ws/Bus/` |
 | The presence member list | `src/Ws/Presence/` |
 | The Laravel broadcast driver | `src/Ws/Broadcasting/SConcurBroadcaster.php` |
-| Starting a worker | `src/Ws/WsServerRunner.php`, `src/Console/WsStartCommand.php` |
+| Starting a worker | `src/Servers/WorkerRoles.php` (the `ws` role), `src/Ws/WsServerRunner.php`; `src/Console/WsStartCommand.php` for a standalone run |
 
 ## Topology
 
@@ -80,8 +80,9 @@ SCONCUR_WS_APP_KEY=some-public-key
 SCONCUR_WS_APP_SECRET=some-private-secret
 ```
 
-The key and the secret are not repeated anywhere else: the broadcast driver, the
-connection handler and the group's path all read them from `config('sconcur.ws')`.
+The key and the secret are not repeated anywhere else: the broadcast driver and the
+connection handler read them from `config('sconcur.ws')`, and the group's path is built
+from the same `SCONCUR_WS_APP_KEY`.
 
 The proxy in front needs a `location` of its own for the upgrade. An upgraded connection is
 long-lived, so the ordinary block's timeouts would cut every client loose once a minute:
@@ -670,8 +671,8 @@ reconnect at once.
 | Code | When |
 |---|---|
 | `4001` | the application key in the path is not the right one |
-| `4009` | the signature did not match, a private channel without `auth`, an encrypted channel |
-| `4100` | the per-connection channel limit is exceeded |
+| `4009` | the signature did not match, a private channel without `auth`, a presence channel without valid `channel_data`, an encrypted channel |
+| `4100` | the per-connection channel limit is exceeded; the presence store is unreachable |
 
 ## Channels and signatures
 
@@ -773,8 +774,8 @@ The one non-obvious part of the implementation.
 
 On a stop, `Scheduler::serve` stops accepting connections and waits for every spawned
 coroutine to finish. An eternal subscriber coroutine never releases that counter, and the
-graceful stop turns into a wait up to `shutdownTimeoutMs` ending in `SIGKILL`. The idle
-diagnostics name the coroutine the scheduler is waiting for outright.
+graceful stop turns into a wait up to `shutdownTimeoutMs` ending in `SIGKILL`. The
+diagnostic a stalled drain writes names the coroutine the scheduler is waiting for outright.
 
 So the subscriber lives exactly as long as there is somebody to deliver to:
 
@@ -793,8 +794,9 @@ second pause the extension gives push-only connections. So
 `SCONCUR_WS_BUS_READ_TIMEOUT_SECONDS` has to stay noticeably below the group's
 `shutdownTimeoutMs`.
 
-A channel error is cured by reopening the channel rather than only the consumer: the
-channel dies with the error, and so does the queue on it.
+An error other than that timeout is cured by reopening the connection and the channel
+rather than only the consumer: the channel dies with the error, and so does the queue on
+it, and a connection the library has marked dead does not come back on its own.
 
 ## Presence channels
 
@@ -810,8 +812,8 @@ The split: the snapshot comes from a shared store, the changes travel over the b
   under `Cache::lock`, with the TTL extended on every change (which is also the cleanup
   after a worker killed with `SIGKILL`).
 - `store: auto` picks by pool size: `memory` with one worker, `cache` with several. An
-  explicit `memory` with a pool larger than one worker is a warning from the start command
-  rather than silent agreement.
+  explicit `memory` with a pool larger than one worker is a warning in the worker's log at
+  start rather than silent agreement.
 
 The store counts members by connection, the protocol counts them by user: one person with
 two tabs is one member. `PresencePayload` folds them together and decides whether a join
@@ -838,5 +840,5 @@ to zero because a silent client is normal — liveness is kept by `pingIntervalM
 - An event sent in the first tens of milliseconds after the first connection to an idle
   worker may not reach it: the bus subscriber comes up together with that connection, and
   the fanout drops the message until its queue is bound.
-- `sconcur:servers:master:reload` drops ws connections. For the http pool a reload is
-  invisible; here it is not, and Echo reconnects on its own.
+- A restart of the master drops ws connections — and new code or a new config is a
+  restart, there is no reload. Echo reconnects on its own.

@@ -2,8 +2,8 @@ English | [Русский](configuration.ru.md)
 
 # Configuration (ENV)
 
-Every value of `config/sconcur.php` comes from ENV, and every variable the package reads is
-listed here. The defaults are the package's, from the skeleton; in the published file the
+The values of `config/sconcur.php` come from ENV, apart from the few named below, and every
+variable the package reads is listed here. The defaults are the package's, from the skeleton; in the published file the
 application sets its own.
 
 ## Table of contents
@@ -38,7 +38,6 @@ from the lines above);
 SCONCUR_PANEL_HOST=http://127.0.0.1:28081/api/stats
 
 # The master (supervisor)
-SCONCUR_HTTP_PHP_BINARY=php
 SCONCUR_HTTP_PANEL_PORT=28081
 SCONCUR_HTTP_ADMIN_TOKEN=
 SCONCUR_HTTP_NAME=sconcur-http-server
@@ -49,11 +48,12 @@ SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS=10000
 SCONCUR_HTTP_RESTART_BACKOFF_MS=200
 SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS=30000
 SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS=60000
+SCONCUR_HTTP_READY_TIMEOUT_MS=30000
+SCONCUR_HTTP_ACCESS_LOG=file
 
 # The http group and its server
 SCONCUR_HTTP_WORKER_COUNT=2
 SCONCUR_HTTP_ADDRESS=0.0.0.0:28080
-SCONCUR_HTTP_REUSE_PORT=true
 SCONCUR_HTTP_MAX_REQUESTS=0
 SCONCUR_HTTP_MAX_CONCURRENCY=0
 SCONCUR_HTTP_MAX_REQUEST_BODY=10485760
@@ -74,7 +74,6 @@ SCONCUR_RABBITMQ_REQUEUE_ON_FAILURE=false
 SCONCUR_RABBITMQ_MAX_MESSAGES=0
 SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS=0
 SCONCUR_RABBITMQ_MAX_MEMORY_BYTES=0
-SCONCUR_RABBITMQ_MEMORY_MB=128
 SCONCUR_RABBITMQ_CONNECTION=sconcur_rabbitmq
 SCONCUR_RABBITMQ_TRIES=1
 SCONCUR_RABBITMQ_BACKOFF=0
@@ -84,7 +83,6 @@ SCONCUR_RABBITMQ_DSN=amqp://guest:guest@127.0.0.1:5672/%2f
 # The ws group and its server; below 1 worker the group is left out
 SCONCUR_WS_WORKER_COUNT=0
 SCONCUR_WS_ADDRESS=0.0.0.0:28090
-SCONCUR_WS_REUSE_PORT=true
 SCONCUR_WS_HANDSHAKE_TIMEOUT_MS=10000
 SCONCUR_WS_IDLE_TIMEOUT_MS=0
 SCONCUR_WS_WRITE_TIMEOUT_MS=30000
@@ -133,7 +131,7 @@ SCONCUR_FILESYSTEM_TIMEOUT_MS=0
 
 | ENV | Default | What it does |
 |---|---|---|
-| `SCONCUR_PANEL_HOST` | `http://127.0.0.1:28081/api/stats` | where the dashboard reads the master's stats from |
+| `SCONCUR_PANEL_HOST` | `http://127.0.0.1:28081/api/stats` | where the demo's dashboard reads the master's stats from; the package itself does not read it |
 
 The coroutine-scoped application has no switch and no mode detection: the provider
 installs the adapters in every process.
@@ -142,37 +140,74 @@ installs the adapters in every process.
 
 | ENV | Default | What it does |
 |---|---|---|
-| `SCONCUR_HTTP_PHP_BINARY` | `php` | the PHP binary for the workers |
 | `SCONCUR_HTTP_PANEL_PORT` | `28081` | telemetry panel port (0 = off) |
 | `SCONCUR_HTTP_ADMIN_TOKEN` | `` (empty) | the panel's bearer token (empty = off) |
 | `SCONCUR_HTTP_NAME` | `sconcur-http-server` | server name (the lock/state/log files) |
 | `SCONCUR_HTTP_ROTATE_DAYS` | `3` | log rotation, days |
 | `SCONCUR_HTTP_LOG_TO` | `both` | where to log (`file`/`stdout`/`both`) |
-| `SCONCUR_HTTP_RESTART_POLICY` | `always` | worker restart policy |
+| `SCONCUR_HTTP_RESTART_POLICY` | `always` | worker restart policy (`always`/`on-failure`/`never`) |
 | `SCONCUR_HTTP_SHUTDOWN_TIMEOUT_MS` | `10000` | graceful worker stop deadline, ms |
 | `SCONCUR_HTTP_RESTART_BACKOFF_MS` | `200` | initial restart backoff, ms |
 | `SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS` | `30000` | maximum restart backoff, ms |
 | `SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS` | `60000` | how long a worker's PHP thread may stay away from the scheduler before the master kills and replaces it; `0` — off, otherwise at least `5000` |
+| `SCONCUR_HTTP_READY_TIMEOUT_MS` | `30000` | a worker that dies before it says it is up, and within this long, failed to start; at least `1000` |
+| `SCONCUR_HTTP_ACCESS_LOG` | `file` | where the workers write their access lines: `file` (each worker to `<name>-access-YYYY-MM-DD.log` in `logDir`, removed with the journal after `rotateDays`), `stdout` (into the master's journal; one process reads every worker's pipe, and under heavy load lines are dropped), `off`; a config without the key gets `file` too |
 
-Not from ENV: `workerScript=base_path('artisan')`, `phpArgs=[]`, and
-`runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`.
+The last seven are the defaults of every group: a group may set any of them for itself, as
+the `tasks` group does with `restartPolicy` and `shutdownTimeoutMs`.
+
+Not from ENV: `runtimeDir`/`logDir`=`storage_path('sconcur/runtime'|'sconcur/logs')`, and
+`env` — environment variables every worker gets on top of the master's, set in the worker
+right after its fork (`putenv`, `$_ENV`, `$_SERVER`). A group's own `env` goes on top of
+that list, and its value wins:
+
+```php
+'master' => [
+    'env'    => ['LOG_CHANNEL' => 'stderr'],
+    'groups' => [
+        [
+            'name' => 'tasks',
+            'role' => 'tasks',
+            'env'  => ['LOG_CHANNEL' => 'daily'], // tasks workers: LOG_CHANNEL=daily
+        ],
+    ],
+],
+```
+
+A variable set this way is seen by `getenv()` in the worker and by what the worker starts.
+The configuration the application loaded in the master is not read again in the worker, so
+`env()` calls in `config/*.php` keep the values the master saw.
 
 ## Groups
 
-One master supervises several unlike pools under one lock and one journal, so
-`workerScript`, `workerCount`, `workerArgs` and `server` live not at the top level of the
-config but in an element of the `groups` list.
+One master supervises several unlike pools under one lock and one journal, so `role`,
+`workerCount` and `server` live not at the top level of the config but in an element of
+the `groups` list.
 
-A group's `server` block is forwarded to its workers' argv verbatim, which is why all
-three commands — `http:start`, `rabbitmq:start` and `ws:start` — declare those flags:
-artisan rejects what is not declared. What reads them back is `HttpServer::fromArgs`,
-`QueueConsumer::fromArgs` and `WsServer::fromArgs`. Anything that is not a scalar (the
-queue list) the master JSON-encodes on the way.
+`sconcur:servers:master:start` builds the master in its own process once the application
+has booted, and every worker is a fork of that process. A group's `role` is what its
+workers run: `http`, `rabbitmq`, `ws` or `tasks`. Its `server` block is the settings of
+the server or consumer each worker builds — turned into `--name=value` flags and read by
+`HttpServer::fromArgs`, `QueueConsumer::fromArgs` and `WsServer::fromArgs`; anything that
+is not a scalar (the queue list) goes as JSON.
 
-A run without a master has nobody to forward it, so in that case the command takes the
-same `server` block out of its own group's config. The group is looked up by what it
-starts rather than by name — otherwise renaming a group would quietly leave a standalone
-run on the library's defaults.
+The `sconcur:servers:http:start`, `sconcur:servers:rabbitmq:start` and
+`sconcur:servers:ws:start` commands run a server without a master.
+They declare the same flags, and without any given they take the `server` block of the
+group of their role. The group is looked up by its role rather than by name — otherwise
+renaming a group would quietly leave a standalone run on the library's defaults.
+
+Every server binds its address with `SO_REUSEPORT`: the workers of a group share the port,
+and the kernel spreads the connections over them. There is no setting for it.
+
+What the application does while it boots happens once, in the master's process, and every
+worker inherits it. Two things follow. No asynchronous call may be made while booting — a
+`sconcur_mysql` query or a `sconcur` Redis command in a service provider starts the
+extension's runtime, and a process running it cannot fork: the master refuses to start,
+with the reason. And a connection opened while booting would be shared by every worker
+rather than copied, so the start command closes the database and Redis connections the
+application opened before it forks; each worker opens its own on its first query.
+Per-worker setup belongs in a [`WorkerForked`](#workerforked) listener.
 
 A `workerCount` below one is how a pool is turned off: the group does not reach the master
 config at all. A zero would not do it — to the master `workerCount: 0` means one worker per
@@ -191,7 +226,6 @@ The `server` block of the `http` group.
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_HTTP_ADDRESS` | `0.0.0.0:28080` | listen address |
-| `SCONCUR_HTTP_REUSE_PORT` | `true` | `SO_REUSEPORT` (several processes on one port) |
 | `SCONCUR_HTTP_MAX_REQUESTS` | `0` | stop after N requests (0 = ∞) |
 | `SCONCUR_HTTP_MAX_CONCURRENCY` | `0` | maximum concurrent requests (0 = ∞) |
 | `SCONCUR_HTTP_MAX_REQUEST_BODY` | `10485760` | request body limit, bytes |
@@ -206,6 +240,13 @@ The `server` block of the `http` group.
 
 How the pool works is in [queue.md](queue.md).
 
+A worker of this group tells the master it is up once the broker has taken its connection,
+before the consumer opens the queues. A queue that is not declared is therefore an ordinary
+restart with backoff and does not stop the master. A broker that cannot be reached or
+refuses the login, a `WorkerForked` listener that throws, or a config the consumer refuses
+fail before that point: they are failed starts, and when every slot fails that way the
+master stops with code `70`.
+
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_RABBITMQ_WORKER_COUNT` | `0` | processes in the pool; below `1` the group does not reach the master config |
@@ -217,7 +258,6 @@ How the pool works is in [queue.md](queue.md).
 | `SCONCUR_RABBITMQ_MAX_MESSAGES` | `0` | drain and exit after N messages |
 | `SCONCUR_RABBITMQ_MAX_RUNTIME_SECONDS` | `0` | drain and exit after N seconds |
 | `SCONCUR_RABBITMQ_MAX_MEMORY_BYTES` | `0` | drain and exit on heap size |
-| `SCONCUR_RABBITMQ_MEMORY_MB` | `128` | worker memory limit, MiB |
 | `SCONCUR_RABBITMQ_CONNECTION` | `sconcur_rabbitmq` | the `config/queue.php` connection the jobs run on |
 | `SCONCUR_RABBITMQ_TRIES` | `1` | attempts before `failed_jobs` |
 | `SCONCUR_RABBITMQ_BACKOFF` | `0` | delay before a retry, seconds |
@@ -240,7 +280,6 @@ The `server` block of the `ws` group.
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_WS_ADDRESS` | `0.0.0.0:28090` | listen address |
-| `SCONCUR_WS_REUSE_PORT` | `true` | `SO_REUSEPORT` (several processes on one port) |
 | `SCONCUR_WS_PATH` | `/app/${SCONCUR_WS_APP_KEY}` | the exact path the upgrade is accepted on; empty accepts any |
 | `SCONCUR_WS_HANDSHAKE_TIMEOUT_MS` | `10000` | how long the upgrade headers may take, ms |
 | `SCONCUR_WS_IDLE_TIMEOUT_MS` | `0` | idle timeout between inbound messages (0 = off) |
@@ -304,8 +343,8 @@ finish. It therefore has to stay well below the group's `shutdownTimeoutMs`.
 
 `SCONCUR_WS_PRESENCE_STORE` set to `memory` is correct only while there is one process.
 Under a pool it is not incomplete but wrong, every worker answering with its own
-subscribers — `auto` picks `cache` there, and an explicit `memory` is reported by the start
-command.
+subscribers — `auto` picks `cache` there, and an explicit `memory` is reported in the log
+by every ws worker as it starts.
 
 ## The task pool
 
@@ -314,7 +353,7 @@ How the pool works is in [task-pool.md](task-pool.md).
 | ENV | Default | What it does |
 |---|---|---|
 | `SCONCUR_TASKS_CONTROL_KEY` | `sconcur:tasks:control` | the cache key `stop` and `restart` reach the pool through |
-| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | flock path; keeps a second copy of a task from starting |
+| `SCONCUR_TASKS_LOCK_PATH` | `storage/sconcur/runtime/tasks.lock` | flock path prefix, one file per task (`<path>.<task>`); keeps a second copy of a task from starting |
 | `SCONCUR_TASKS_MEMORY_MB` | `256` | process memory limit, against the larger of the PHP heap and RSS; past it, an exit with `EXIT_RESTART` |
 | `SCONCUR_TASKS_SLEEP_CHUNK_MS` | `250` | how finely a pause is cut, that is how fast the pool notices a signal |
 | `SCONCUR_TASKS_PREEMPTION_QUANTUM_MS` | `0` | automatic coroutine switching; `0` — off |
@@ -351,10 +390,15 @@ The `sconcur.listeners` section maps an event class to a list of its listeners, 
 `EventServiceProvider::$listen` takes. The service provider registers them in every process.
 
 ```php
+use App\Listeners\PrepareWorker;
 use App\Listeners\ReportWorkerWatchdog;
+use SConcur\Laravel\Servers\Events\WorkerForked;
 use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 
 'listeners' => [
+    WorkerForked::class => [
+        PrepareWorker::class,
+    ],
     WorkerWatchdogTriggered::class => [
         ReportWorkerWatchdog::class,
     ],
@@ -363,7 +407,47 @@ use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 
 | Event | Raised in | When |
 |---|---|---|
+| `SConcur\Laravel\Servers\Events\WorkerForked` | a worker of the master | right after the fork, before the worker builds its server, consumer or task pool |
 | `SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered` | the master process | the master's watchdog acts on a worker whose PHP thread stopped coming back to the scheduler |
+
+### `WorkerForked`
+
+The place for what has to be done once per worker rather than once per master: every
+worker starts with a copy of what the master's process loaded, so a value computed while
+the application booted — an id, a timestamp, a seed — is the same in all of them.
+`WorkerForked::$workerContext` is the library's `SConcur\Worker\WorkerContext`: `group`,
+`slot` (from `0`) and `masterPid`.
+
+```php
+namespace App\Listeners;
+
+use Illuminate\Support\Facades\Log;
+use SConcur\Laravel\Servers\Events\WorkerForked;
+
+class PrepareWorker
+{
+    public function handle(WorkerForked $workerForked): void
+    {
+        Log::withContext([
+            'worker' => $workerForked->workerContext->group . '#' . $workerForked->workerContext->slot,
+        ]);
+    }
+}
+```
+
+A closure does as well, registered in a service provider:
+
+```php
+Event::listen(static function (WorkerForked $workerForked): void {
+    // ...
+});
+```
+
+The listener runs in the worker, so it may make asynchronous calls. It runs before the
+worker says it is up: an exception it lets out ends the worker, and when every worker of a
+group ends that way the master stops with code `70`.
+
+### `WorkerWatchdogTriggered`
 
 `WorkerWatchdogTriggered::$watchdogEvent` is the library's `SConcur\Worker\WatchdogEvent`:
 `event`, `group`, `slot`, `pid`, `ageSeconds` and `watchdogTimeoutMs`. One kill raises up to
@@ -400,5 +484,7 @@ class ReportWorkerWatchdog
 ```
 
 The listener runs inside the master's supervision tick, and the master supervises nothing
-while it runs, so it has to be short. Whatever it throws is written to the master's journal
-and dropped.
+while it runs, so it has to be short. It must make no asynchronous call either — no
+`sconcur_mysql`, `sconcur` Redis or HTTP client of the extension: the master's process
+refuses one, since a process running the extension's runtime cannot fork its workers.
+Whatever it throws is written to the master's journal and dropped.

@@ -40,6 +40,11 @@ Any of these (`src/Http/StreamedChunks.php`):
 - Symfony's `new StreamedResponse($iterable)`, a subclass included — the iterable may be a
   generator, an array or any `Traversable`;
 - Laravel's `response()->stream(function () { yield …; })`;
+- Laravel's `response()->eventStream(function () { yield …; })`, or with a callback that
+  returns any iterable — a chunk per event, framed as Laravel frames it: `event:` and
+  `data:` lines, a message that is not a string or a number as JSON, a `StreamedEvent` under
+  its own event name, and the closing event (`</stream>` by default) after the last message,
+  written out as it is;
 - a `StreamedResponse` whose callback is itself a generator function
   (`->setCallback(fn () => yield …)`).
 
@@ -55,11 +60,11 @@ return new StreamedResponse((static function () use ($cursor): Generator {
 })(), 200, ['Content-Type' => 'application/json']);
 ```
 
-The first two shapes run outside this server unchanged: under PHP-FPM, Symfony and Laravel
-print every chunk and flush it. The third is Octane's: under PHP-FPM the callback's generator
+The first three shapes run outside this server unchanged: under PHP-FPM, Symfony and Laravel
+print every chunk and flush it. The fourth is Octane's: under PHP-FPM the callback's generator
 is never iterated and the body is empty.
 
-Recognising the first two shapes means reading the variables of the closure Symfony
+Recognising the first three shapes means reading the variables of the closure Symfony
 and Laravel wrap the chunks in. A shape that is not recognised is not an error: the response
 is sent whole, like a callback that prints.
 
@@ -67,7 +72,8 @@ is sent whole, like a callback that prints.
 
 Every chunk yielded is one chunk on the wire, whether or not anything was waited on in
 between, so a generator that only computes streams too
-(`src/Http/IterableResponseBody.php`).
+(`src/Http/IterableResponseBody.php`). The server reads at most 64 KiB at a time, so a
+longer chunk goes out in 64 KiB pieces; an empty one sends nothing.
 
 A generator runs on the stack of whoever advances it — here the request coroutine. So it
 works like any code of the handler:
@@ -78,8 +84,8 @@ works like any code of the handler:
   coroutine the ordinary way and lets the other requests of the worker run;
 - preemption and `handlerTimeoutMs` reach it as they reach any handler.
 
-A chunk is a string; an integer, a float, `null` or a `Stringable` is turned into one the way
-`echo` would. Anything else ends the body with an `UnexpectedValueException`.
+A chunk is a string; an integer, a float, a boolean, `null` or a `Stringable` is turned into
+one the way `echo` would. Anything else ends the body with an `UnexpectedValueException`.
 
 ### Termination
 
@@ -107,7 +113,7 @@ A `StreamedResponse` whose callback prints with `echo` is not streamed: it is se
 an ordinary response. `PsrHttpFactory` runs the callback to its end into `php://temp` (the
 first 2 MB in memory, the rest on disk), and the client gets the first byte when the callback
 is done. This covers `StreamedJsonResponse`, `response()->streamJson()`,
-`response()->streamDownload()`, `response()->eventStream()` and every callback with `echo`.
+`response()->streamDownload()` and every callback with `echo`.
 
 To stream such a response, write it with `yield`:
 

@@ -17,10 +17,10 @@ After that the demo answers on `http://localhost:48081` (the port is `APP_PORT` 
 
 | Container | Role |
 |---|---|
-| `scl-nginx` | the only published entry point; proxies to the `http` pool |
+| `scl-nginx` | the only published entry point; proxies to the `http` and `ws` pools |
 | `scl-php` | CLI only: composer, artisan, phpunit, the analyzers. There is no php-fpm here — HTTP is served by SConcur itself. phpredis is installed here, and only here, for the tests that compare the `sconcur` Redis client with it |
 | `scl-workers` | supervisor, and under it the SConcur master with the `http`, `rabbitmq`, `ws` and `tasks` groups |
-| `scl-mysql` | MySQL 8.4, data in `tmpfs` — wiped when the container is recreated |
+| `scl-mysql` | MySQL 8.4, data in `tmpfs` — wiped when the container stops |
 | `scl-rabbitmq` | RabbitMQ 4.1 with its panel, in `tmpfs` as well |
 | `scl-redis` | Redis 8.2 with a password, in `tmpfs` as well; the demo's cache store and `Redis::` |
 
@@ -42,7 +42,7 @@ make demo-art c=...                   # artisan of the demo application
 make workers-art c=...                # the same artisan inside the workers container
 make queues-declare                   # declare the queues the consumer pool reads
 make sconcur-status                   # master status: groups and workers
-make sconcur-reload                   # rolling restart of the pools, master stays up
+make sconcur-stop                     # stop the master; supervisor starts a fresh one
 make tasks-stop / make tasks-restart  # driving the task pool from another container
 make ws-check c=50                    # the ws pool end to end, with an exit code
 make check                            # cs-fixer, phpstan, tests

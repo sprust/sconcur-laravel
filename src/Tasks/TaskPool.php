@@ -13,6 +13,8 @@ use SConcur\Laravel\Support\ProcessMemory;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
 use SConcur\Laravel\Tasks\Events\TaskTickFinished;
 use SConcur\Laravel\Tasks\Events\TaskTickStarted;
+use SConcur\Process\ProcessControl;
+use SConcur\Process\ProcessSignalEnum;
 use SConcur\Scheduler\Scheduler;
 use SConcur\WaitGroup;
 use Throwable;
@@ -120,7 +122,7 @@ class TaskPool
             processMemory: $this->processMemory,
         );
 
-        $restoreSignals = $this->installSignalHandlers($controller);
+        $restoreSignals = $this->watchSignals();
         $preemption     = $this->enablePreemption();
 
         $this->logger->log('pool', 'started: ' . implode(', ', $names));
@@ -349,7 +351,7 @@ class TaskPool
     /**
      * Enabling it is the whole reason the controller keeps its tick under a task busy
      * with computation: a stretch of PHP that never suspends would otherwise starve it,
-     * and with it both the signal handler and the control channel. Native blocking calls
+     * and with it both the signals and the control channel. Native blocking calls
      * stay unpreemptable — that is what the shutdown deadline is for.
      */
     protected function enablePreemption(): bool
@@ -364,46 +366,21 @@ class TaskPool
     }
 
     /**
-     * Mirrors ServerRuntimeSupportTrait::installSignalHandlers(): remember what was in
-     * place, install ours, hand back the restorer. The handler does nothing but raise a
-     * flag — the controller decides what it means on its next tick.
+     * Starts recording SIGTERM and SIGINT and hands back what puts the previous handling
+     * back. Recorded by the extension, the way the library's servers watch theirs: no PHP
+     * runs inside the handler, and the controller takes what arrived on its next tick.
      *
      * @return Closure(): void
      */
-    protected function installSignalHandlers(TaskPoolController $controller): Closure
+    protected function watchSignals(): Closure
     {
-        if (!function_exists('pcntl_async_signals')) {
-            return static function (): void {
-            };
-        }
+        ProcessControl::watchSignals([
+            ProcessSignalEnum::Terminate,
+            ProcessSignalEnum::Interrupt,
+        ]);
 
-        $signals = [SIGTERM, SIGINT, SIGQUIT];
-
-        $previousAsync = pcntl_async_signals();
-
-        /** @var array<int, callable|int> $previousHandlers */
-        $previousHandlers = [];
-
-        foreach ($signals as $signal) {
-            $previousHandlers[$signal] = pcntl_signal_get_handler($signal);
-        }
-
-        pcntl_async_signals(true);
-
-        $handler = static function () use ($controller): void {
-            $controller->signalled();
-        };
-
-        foreach ($signals as $signal) {
-            pcntl_signal($signal, $handler);
-        }
-
-        return static function () use ($signals, $previousHandlers, $previousAsync): void {
-            foreach ($signals as $signal) {
-                pcntl_signal($signal, $previousHandlers[$signal]);
-            }
-
-            pcntl_async_signals($previousAsync);
+        return static function (): void {
+            ProcessControl::restoreSignals();
         };
     }
 }

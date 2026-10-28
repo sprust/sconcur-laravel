@@ -25,7 +25,6 @@ use Illuminate\Queue\QueueManager;
 use Illuminate\Redis\RedisManager;
 use SConcur\Laravel\Cache\Redis\StoreFactory;
 use SConcur\Laravel\Console\HttpStartCommand;
-use SConcur\Laravel\Console\MasterReloadCommand;
 use SConcur\Laravel\Console\MasterStartCommand;
 use SConcur\Laravel\Console\MasterStatusCommand;
 use SConcur\Laravel\Console\MasterStopCommand;
@@ -43,6 +42,8 @@ use SConcur\Laravel\Filesystem\SconcurLocalDiskFactory;
 use SConcur\Laravel\Filesystem\SconcurLocalFilesystemAdapter;
 use SConcur\Laravel\Queue\Rabbitmq\Connector;
 use SConcur\Laravel\Redis\Connector as RedisConnector;
+use SConcur\Laravel\Servers\MasterGroups;
+use SConcur\Laravel\Servers\WorkerRoleEnum;
 use SConcur\Laravel\Tasks\Control\ControlChannel;
 use SConcur\Laravel\Tasks\CooperativeSleeper;
 use SConcur\Laravel\Tasks\TaskPoolLogger;
@@ -64,7 +65,6 @@ use SConcur\Laravel\Ws\Presence\PresenceRepositoryInterface;
 use SConcur\Laravel\Ws\Protocol\MessageCodec;
 use SConcur\Laravel\Ws\SocketIdGenerator;
 use SConcur\Laravel\Ws\WsBusOptions;
-use SConcur\Laravel\Ws\WsGroupConfig;
 use SConcur\Laravel\Ws\WsLogger;
 use SConcur\Laravel\Ws\WsOptions;
 use SConcur\Laravel\Ws\WsPresenceOptions;
@@ -110,7 +110,6 @@ class SConcurServiceProvider extends ServiceProvider
             MasterStartCommand::class,
             MasterStopCommand::class,
             MasterStatusCommand::class,
-            MasterReloadCommand::class,
             HttpStartCommand::class,
             RabbitmqConsumerStartCommand::class,
             RabbitmqDeclareCommand::class,
@@ -339,7 +338,7 @@ class SConcurServiceProvider extends ServiceProvider
     {
         $options = $app->make(WsOptions::class)->presence;
 
-        $store = $options->resolveStore(WsGroupConfig::workerCount(WsStartCommand::NAME));
+        $store = $options->resolveStore(MasterGroups::workerCount(WorkerRoleEnum::Ws));
 
         if ($store === WsPresenceOptions::STORE_MEMORY) {
             return new MemoryPresenceRepository();
@@ -460,7 +459,7 @@ class SConcurServiceProvider extends ServiceProvider
      * DatabaseManager::configure() hands every connection whatever `db.transactions`
      * resolves to, once, so this has to be in place before the first connection is built
      * — which register() is. Model::saveOrFail() opens a transaction, so this is on the
-     * path of an ordinary create, not only of an explicit DB::transaction().
+     * path of a model saved that way, not only of an explicit DB::transaction().
      */
     private function registerCoroutineTransactionsManager(): void
     {

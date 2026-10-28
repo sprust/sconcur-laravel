@@ -9,8 +9,9 @@ namespace SConcur\Laravel\Ws;
  *
  * `store` is `auto` by default, which means the process decides from the pool size: one
  * worker owns the whole list and needs nothing shared, several workers do. Naming a store
- * explicitly overrides that — and `memory` under a multi-worker pool is a mistake the
- * start command reports rather than a configuration it silently honours.
+ * explicitly overrides that — and `memory` under a multi-worker pool is a mistake every
+ * ws worker reports in its log as it starts, rather than a configuration it silently
+ * honours.
  */
 readonly class WsPresenceOptions
 {

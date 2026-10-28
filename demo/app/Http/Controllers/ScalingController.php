@@ -51,8 +51,9 @@ class ScalingController
         $before = ScalingSettings::current();
         $after  = ScalingSettings::store($data);
 
-        // Only the groups whose numbers moved: rolling the HTTP pool because the queue's
-        // consumer count changed would drop every connection for nothing.
+        // The groups whose numbers moved. A new master is the only way to new numbers and
+        // it brings every pool up again, so they decide whether a restart is needed at
+        // all, not which pools take it.
         $groups = [];
 
         if ($after['httpWorkers'] !== $before['httpWorkers']) {
@@ -69,16 +70,16 @@ class ScalingController
             $groups[] = 'ws';
         }
 
-        ScalingSettings::requestReload($groups);
+        ScalingSettings::requestRestart($groups);
 
         return response()->json([
             'settings' => $after,
-            'rolling'  => $groups,
+            'changed'  => $groups,
             // The pool picks the request up on its next tick; the workers table shows
-            // the new counts once the roll is through.
+            // the new counts once the new master is up.
             'note'     => $groups === []
-                ? 'nothing changed, no reload needed'
-                : 'the task pool is rolling: ' . implode(', ', $groups),
+                ? 'nothing changed, no restart needed'
+                : 'the task pool is restarting the master for: ' . implode(', ', $groups),
         ], 202);
     }
 }

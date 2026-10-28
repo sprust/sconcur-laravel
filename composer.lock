@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "525cff1d7e64b1107895149031ff819b",
+    "content-hash": "9d0029b8419c419c3c9b1924b46f29e1",
     "packages": [
         {
             "name": "brick/math",
@@ -3187,20 +3187,19 @@
         },
         {
             "name": "sconcur/sconcur",
-            "version": "0.15.0",
+            "version": "0.18.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/sprust/sconcur.git",
-                "reference": "1a380a9e842b829c9b058d5da9154ac0032d603e"
+                "reference": "c0dd89b837879ced3a5dff602719c958935cf1dc"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sprust/sconcur/zipball/1a380a9e842b829c9b058d5da9154ac0032d603e",
-                "reference": "1a380a9e842b829c9b058d5da9154ac0032d603e",
+                "url": "https://api.github.com/repos/sprust/sconcur/zipball/c0dd89b837879ced3a5dff602719c958935cf1dc",
+                "reference": "c0dd89b837879ced3a5dff602719c958935cf1dc",
                 "shasum": ""
             },
             "require": {
-                "ext-msgpack": "3.0.1",
                 "php": "^8.4",
                 "psr/http-client": "^1.0",
                 "psr/http-factory": "^1.0",
@@ -3220,12 +3219,8 @@
                 "symfony/var-dumper": "^7.3",
                 "vlucas/phpdotenv": "^5.6"
             },
-            "suggest": {
-                "ext-pcntl": "Required for graceful shutdown of the HTTP server (SIGTERM/SIGINT handling); the server otherwise runs until the process is killed"
-            },
             "bin": [
                 "bin/sconcur-load",
-                "bin/sconcur-server",
                 "bin/sconcur-status"
             ],
             "type": "library",
@@ -3247,9 +3242,9 @@
             "description": "PHP concurrency library backed by an extension written in Rust",
             "support": {
                 "issues": "https://github.com/sprust/sconcur/issues",
-                "source": "https://github.com/sprust/sconcur/tree/v0.15.0"
+                "source": "https://github.com/sprust/sconcur/tree/v0.18.0"
             },
-            "time": "2026-10-10T04:41:51+00:00"
+            "time": "2026-10-27T19:42:49+00:00"
         },
         {
             "name": "symfony/clock",
@@ -10358,8 +10353,7 @@
     },
     "platform-dev": {},
     "platform-overrides": {
-        "php": "8.4.15",
-        "ext-msgpack": "3.0.1"
+        "php": "8.4.15"
     },
     "plugin-api-version": "2.9.0"
 }

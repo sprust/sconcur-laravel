@@ -27,8 +27,13 @@
 - пул на `basic.consume` несуществующей очереди получает
   `SConcur\Exceptions\Amqp\QueueException` с текстом
   `Server channel error: 404, message: NOT_FOUND - no queue 'default' in vhost '/'`.
-  Воркер выходит с кодом `1`, мастер поднимает замену, и так по кругу с растущим backoff:
-  пул не читает ничего, а в панели телеметрии его группа стоит без воркеров.
+  Первое открытие не повторяется: воркер выходит с ненулевым кодом, и мастер запускает его
+  снова с растущей паузой, до `maxRestartBackoffMs`, пока очереди нет. Воркер `rabbitmq`
+  сообщает мастеру, что поднялся, когда брокер принял его соединение, — до того как
+  консьюмер открывает очереди, поэтому такой отказ — обычный перезапуск, а не неудачный
+  старт: мастер и остальные его группы, HTTP тоже, продолжают работать, а ошибка брокера
+  видна только в журнале воркера. Недоступный брокер или отвергнутый логин — по-прежнему
+  неудачный старт ([configuration.ru.md](configuration.ru.md#группа-rabbitmq-и-её-консьюмеры)).
 
 Команда объявляет то, что перечислено в `sconcur.queue.rabbitmq.queues`, флагами
 `durable`, не `exclusive`, не `autoDelete`, без аргументов — теми же, что и
@@ -58,9 +63,11 @@
 ```php
 // config/queue.php
 'sconcur_rabbitmq' => [
-    'driver'    => 'sconcur_rabbitmq',
-    'queue'     => env('RABBITMQ_QUEUE', 'default'),
-    'dsn'       => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'driver'                  => 'sconcur_rabbitmq',
+    'queue'                   => env('RABBITMQ_QUEUE', 'default'),
+    'dsn'                     => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'confirm_publishes'       => false,
+    'confirm_timeout_seconds' => 5.0,
 ],
 ```
 
@@ -85,10 +92,19 @@
 выбрасывается брокером — а `publishConfirmed` по умолчанию mandatory и бросает
 `UnroutableMessageException`.
 
+`confirm_publishes` (по умолчанию `false`) отправляет через `publishConfirmed` и все
+остальные публикации — ценой одного обращения к брокеру на каждую. `confirm_timeout_seconds`
+(по умолчанию `5.0`) — сколько подтверждённая публикация, отложенная или нет, ждёт
+подтверждения брокера.
+
 ## Консьюмер
 
-Пул — это группа мастера, поэтому он живёт под тем же супервизором, что и HTTP, и
-отчитывается в ту же панель телеметрии (секция `consumers`).
+Пул — это группа мастера `rabbitmq`, поэтому он живёт под тем же супервизором, что и
+HTTP, и отчитывается в ту же панель телеметрии (секция `consumers`). Воркер группы сам
+выполняет `ConsumerRunner` на `QueueConsumer`, построенном через `QueueConsumer::fromArgs()`
+из блока `server` группы. `sconcur:servers:rabbitmq:start` запускает тот же консьюмер в
+foreground, вне мастера; если флагов консьюмера не передано, он берёт их из того же блока
+`server`.
 
 ```
 php artisan sconcur:rabbitmq:declare
@@ -111,6 +127,11 @@ php artisan sconcur:servers:rabbitmq:start --queues='[{"name":"default","corouti
 поймал, а отклоняет её, — решать это приложению, знающему свои джобы.
 `WorkerOptions::$timeout` при этом ноль намеренно: `SIGALRM` воркера Laravel убил бы
 процесс вместе со всеми обработчиками, работающими рядом.
+
+`maxMessages`, `maxRuntimeSeconds` и `maxMemoryBytes` (куча PHP) останавливают воркер,
+когда он доработает текущие обработчики. Под мастером это остановка на лимите: замена
+форкается сразу, без backoff падений, а `maxMessages` разбрасывается — каждый воркер
+останавливается где-то между лимитом и полуторным лимитом. Вне мастера лимит точный.
 
 Watchdog мастера — другое, и он включён. Джоба, держащая PHP-поток в нативном вызове —
 запрос через PDO, `curl`, `sleep()`, — дольше `watchdogTimeoutMs` (60 с по умолчанию,

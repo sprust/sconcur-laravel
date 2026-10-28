@@ -62,13 +62,16 @@ Four of them, all groups of one supervisor process, the SConcur master
 
 ## Artisan commands
 
-The master is instantiated inside the commands straight out of `config('sconcur.master')`
-(through `MasterConfig::fromArray`), with no JSON path passed around.
+`sconcur:servers:master:start` builds the library's `WorkerMaster` straight out of
+`config('sconcur.master')` in its own process, once the application has booted. Every
+worker is a fork of that process: it starts with the application already in memory and
+runs its group's role — the HTTP server, the queue consumer pool, the WebSocket server or
+the task pool. `stop` and `status` reach a running master through `MasterControl`, by its
+`runtimeDir` and `name`.
 
 ```
-sconcur:servers:master:start|stop                 # MasterRunner (the supervisor, spawns the workers)
+sconcur:servers:master:start|stop                 # the supervisor: builds the master, forks the workers
 sconcur:servers:master:status [--group=NAME]      # status: every pool or one
-sconcur:servers:master:reload [--group=NAME]      # rolling restart: every pool or one
 sconcur:servers:http:start                        # one HTTP server in the foreground (build + serve)
 sconcur:servers:rabbitmq:start                    # the queue consumer pool in the foreground
 sconcur:rabbitmq:declare                          # declare the queues the pool reads — mandatory
@@ -80,16 +83,14 @@ sconcur:extension:load                            # download the .so (runs the d
 sconcur:extension:status                          # extension status (in-process)
 ```
 
-`reload` is the only command that needs a file: the master re-reads the config from disk
-in its own process, so an in-memory object never reaches it. `masterConfigPath()`
-serializes the same array into `{runtimeDir}/{name}.config.json` and returns the path, so
-the file the master reloads from and the config it is supervised with cannot drift apart.
+There is no reload: a master holds the application it loaded, so new code or a new config
+is a new master — `master:stop`, and the process supervisor starts it again.
 
-The master spawns workers as `php artisan sconcur:servers:http:start --masterPid=N`
-(`workerScript=artisan`, `workerArgs=[command]`). The same `http:start` also runs
-standalone. The handler is coroutine-safe (per-fiber context) and requests inside one
-process are handled concurrently; a multi-process production setup is `master:start`
-(plus `reusePort`).
+The `*:start` commands of the four runtimes run one of them in the foreground without a
+master; the HTTP, queue and WebSocket ones take the flags of their group's `server` block
+unless given their own. The
+handler is coroutine-safe (per-fiber context) and requests inside one process are handled
+concurrently; a multi-process production setup is `master:start`.
 
 ## The demo application
 

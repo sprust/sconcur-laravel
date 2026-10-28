@@ -79,7 +79,7 @@
 | `password` | — | пароль |
 | `database` | `0` | номер базы |
 | `url` | — | URL `redis://`, `rediss://` или `tls://`; сливается с полями так же, как это делает `RedisManager`, и перекрывает их |
-| `timeout_ms` | `30000` (расширения) | дедлайн одной команды; `0` — без дедлайна |
+| `timeout_ms` | `30000` (фичи) | дедлайн одной команды; `0` — без дедлайна |
 | `pool_size` | `4` (расширения) | мультиплексированных соединений на процесс для этого сервера; не больше 64 |
 | `conn_max_lifetime_ms` | без ограничения | сколько соединение живёт в пуле, прежде чем его заменят |
 | `prefix` | `redis.options.prefix` | ставится перед ключами, как у phpredis; см. [префикс ключей](#префикс-ключей) |
@@ -165,8 +165,8 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
 - Любой другой вызов читается с сигнатурой phpredis, как и каждый вызов через
   `Redis::command()` и на пакете пайплайна или транзакции. Там, где сигнатура принимает массив
   опций или свой порядок аргументов, её разбирает `SConcur\Laravel\Redis\PhpRedisArguments`:
-  `zRange`/`zRevRange` с `true` или `['withscores', 'byscore', 'bylex', 'rev', 'limit']`,
-  `zRangeByScore`/`zRevRangeByScore` с `['withscores', 'limit']`, `zAdd` с флагами перед
+  `zRange` с `true` или `['withscores', 'byscore', 'bylex', 'rev', 'limit']`, `zRevRange` с
+  `true` или `['withscores']`, `zRangeByScore`/`zRevRangeByScore` с `['withscores', 'limit']`, `zAdd` с флагами перед
   парами, `zInterStore`/`zUnionStore`, `set` с TTL или `['nx', 'ex' => 10]`,
   `lRem(key, value, count)`, `eval`/`evalSha(script, arguments, numberOfKeys)`, `sort`,
   `xAdd`, `xRead`, `lPos`, `getEx`, `copy`, `flushDb`/`flushAll` с `async`, `rawCommand`.
@@ -210,6 +210,7 @@ Redis::type('greeting');                           // 1, Redis::REDIS_STRING
 | отвергнутая команда отвечает `false`, а причину держит в `getLastError()` | `RedisCommandException` | `false` от `incr` или `hget` читался бы как ответ, а `WRONGTYPE` — как отсутствующий ключ |
 | `scan($cursor)` двигает курсор через ссылку | `scan()`, `hscan()`, `sscan()` и `zscan()` отвечают `[курсор, элементы]`, у `hscan`/`zscan` элементы — карта | вызов фасада не может передать ссылку |
 | статус, который вернул Lua-скрипт, — `true` | строка `'OK'` | фича отдаёт статус и строку одинаково |
+| `disconnect()` закрывает сокет | ничего не делает | соединения принадлежат пулу расширения для этого dsn, общему на весь процесс, и неиспользуемый пул оно закрывает само |
 
 Один объект соединения обслуживает все корутины процесса: сокета и своего состояния у него
 нет.
@@ -525,7 +526,7 @@ QUEUE_CONNECTION=redis
      `Redis::transaction(function ($transaction) { ... })`, а у `watch()` замены нет.
 
 5. Проверьте пакеты, которые работают с Redis напрямую. Пакет, требующий `ext-redis` в своём
-   `composer.json`, оставляет расширение; Horizon на этом клиенте не проверялся.
+   `composer.json`, оставляет расширение; Horizon на этом клиенте не проверяется.
 
 6. Задеплойте и убедитесь, что данные на месте:
 

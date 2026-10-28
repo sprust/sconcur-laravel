@@ -8,10 +8,12 @@ What lies where in the repository.
 config/sconcur.php             — the config (panel_host, scoped_services, filesystem, listeners, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider.php — the provider (commands + wiring the adapters into the worker)
 src/Console/                   — artisan commands
-src/Servers/                   — MasterRunner (a wrapper over SConcur\Worker\MasterCli),
-                                 WatchdogEventForwarder, Events/WorkerWatchdogTriggered
+src/Servers/                   — MasterFactory (config → SConcur\Worker\WorkerMaster), WorkerRoles +
+                                 WorkerRoleEnum (what a forked worker runs), MasterGroups, ServerFlags,
+                                 WatchdogEventForwarder, Events/WorkerForked, Events/WorkerWatchdogTriggered
 src/Queue/Rabbitmq/            — the queue driver and the consumer pool (Connector, Queue, Job, ConsumerRunner)
-src/Database/                  — TransactionStore (the transaction nesting level, per coroutine)
+src/Database/                  — TransactionStore (the transaction nesting level, per coroutine),
+                                 CoroutineTransactionsManager (Laravel's transactions manager, per coroutine)
 src/Database/Mysql/            — the sconcur_mysql connection (Connector, Connection, Dsn, TransactionStack)
 src/Redis/                     — the sconcur Redis client (Connector, Connection, Dsn, CommandBatch,
                                  CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,
@@ -21,7 +23,7 @@ src/Filesystem/                — the sconcur_local disk and the File facade on
                                  FilesFeatureCall, LocalPaths)
 src/Cache/Redis/               — the sconcur_redis cache store (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (a retry pause that does not freeze the worker),
-                                 ProcessMemory (the resident set size of the process),
+                                 ProcessMemory (the resident set size of the process and its proportional share),
                                  Coroutine (whether the caller runs in a coroutine the extension drives)
 src/Tasks/                     — the periodic task pool (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)

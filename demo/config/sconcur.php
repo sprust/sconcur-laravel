@@ -24,8 +24,8 @@ use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
 |
 | The three pool sizes come from ScalingSettings rather than straight from ENV, because
 | the demo page can change them: the numbers live in a file both this config and the
-| page can see, and the master picks them up when the task pool rolls the group. Nothing
-| else here is settable at runtime.
+| page can see, and a new master picks them up when the task pool has the old one
+| stopped. Nothing else here is settable at runtime.
 */
 $scaling = ScalingSettings::current();
 
@@ -44,8 +44,6 @@ return [
     ],
 
     'master' => [
-        'phpBinary'           => env('SCONCUR_HTTP_PHP_BINARY', 'php'),
-        'phpArgs'             => [],
         'panelPort'           => (int) env('SCONCUR_PANEL_PORT', 28081),
         'adminToken'          => env('SCONCUR_HTTP_ADMIN_TOKEN', ''),
         'runtimeDir'          => storage_path('sconcur/runtime'),
@@ -58,22 +56,20 @@ return [
         'restartBackoffMs'    => (int) env('SCONCUR_HTTP_RESTART_BACKOFF_MS', 200),
         'maxRestartBackoffMs' => (int) env('SCONCUR_HTTP_MAX_RESTART_BACKOFF_MS', 30000),
         'watchdogTimeoutMs'   => (int) env('SCONCUR_HTTP_WATCHDOG_TIMEOUT_MS', 60000),
+        'readyTimeoutMs'      => (int) env('SCONCUR_HTTP_READY_TIMEOUT_MS', 30000),
+        'accessLog'           => env('SCONCUR_HTTP_ACCESS_LOG', 'file'),
+        'env'                 => [],
 
         // array_values, and not for tidiness: array_filter preserves keys, so dropping
         // the conditional rabbitmq group out of the middle leaves [0 => http, 2 => tasks]
-        // — and MasterConfig::parseGroups refuses anything that is not a list.
+        // — and WorkerMaster takes its groups as a list.
         'groups' => array_values(array_filter([
             [
-                'name'         => 'http',
-                'workerScript' => base_path('artisan'),
-                // Two, so a rolling reload has somewhere to send traffic: reload takes a
-                // slot down and only then starts its replacement, and SO_REUSEPORT hands
-                // new connections to the workers still listening.
-                'workerCount'  => $scaling['httpWorkers'],
-                'workerArgs'   => ['sconcur:servers:http:start'],
-                'server'       => [
+                'name'        => 'http',
+                'role'        => 'http',
+                'workerCount' => $scaling['httpWorkers'],
+                'server'      => [
                     'address'             => '0.0.0.0:' . env('SCONCUR_HTTP_PORT', 28080),
-                    'reusePort'           => (bool) env('SCONCUR_HTTP_REUSE_PORT', true),
                     'maxRequests'         => (int) env('SCONCUR_HTTP_MAX_REQUESTS', 0),
                     'maxConcurrency'      => (int) env('SCONCUR_HTTP_MAX_CONCURRENCY', 0),
                     'maxRequestBody'      => (int) env('SCONCUR_HTTP_MAX_REQUEST_BODY', 10485760),
@@ -90,11 +86,10 @@ return [
             // master config entirely. Setting workerCount to 0 would not do it — to the
             // master that means one worker per CPU, not none.
             $scaling['rabbitmqWorkers'] < 1 ? null : [
-                'name'         => 'rabbitmq',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => $scaling['rabbitmqWorkers'],
-                'workerArgs'   => ['sconcur:servers:rabbitmq:start'],
-                'server'       => [
+                'name'        => 'rabbitmq',
+                'role'        => 'rabbitmq',
+                'workerCount' => $scaling['rabbitmqWorkers'],
+                'server'      => [
                     // The weight is how many consumers the queue gets, each on its own
                     // channel — the analogue of running that many `queue:work`
                     // processes on it. A handler still runs in its own coroutine per
@@ -118,13 +113,11 @@ return [
             // from the page: raise it above one to watch the fanout bus do something
             // visible, with two browsers landing on different workers.
             $scaling['wsWorkers'] < 1 ? null : [
-                'name'         => 'ws',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => $scaling['wsWorkers'],
-                'workerArgs'   => ['sconcur:servers:ws:start'],
-                'server'       => [
+                'name'        => 'ws',
+                'role'        => 'ws',
+                'workerCount' => $scaling['wsWorkers'],
+                'server'      => [
                     'address'   => '0.0.0.0:' . env('SCONCUR_WS_PORT', 28090),
-                    'reusePort' => (bool) env('SCONCUR_WS_REUSE_PORT', true),
                     // The key is part of the path, and the comparison ignores the query
                     // string — so /app/{key}?protocol=7 matches and a wrong key is a 404
                     // on the handshake.
@@ -152,10 +145,9 @@ return [
 
             // Exactly one worker, always: a second one would tick every task twice.
             [
-                'name'         => 'tasks',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => 1,
-                'workerArgs'   => ['sconcur:tasks:start'],
+                'name'        => 'tasks',
+                'role'        => 'tasks',
+                'workerCount' => 1,
                 // Not the master's `always`: `sconcur:tasks:stop` exits 0, and under
                 // `always` the master would put a fresh pool up within the second — a
                 // stop that does not stop.
@@ -178,9 +170,8 @@ return [
                 env('SCONCUR_RABBITMQ_QUEUE', 'demo'),
             ],
 
-            'tries'     => (int) env('SCONCUR_RABBITMQ_TRIES', 3),
-            'backoff'   => (int) env('SCONCUR_RABBITMQ_BACKOFF', 0),
-            'memory_mb' => (int) env('SCONCUR_RABBITMQ_MEMORY_MB', 128),
+            'tries'   => (int) env('SCONCUR_RABBITMQ_TRIES', 3),
+            'backoff' => (int) env('SCONCUR_RABBITMQ_BACKOFF', 0),
         ],
     ],
 
@@ -235,7 +226,8 @@ return [
                 'busy'    => 2,
                 'backoff' => 5,
             ],
-            // Polls for a scaling request from the page and rolls the groups it names.
+            // Polls for a scaling request from the page and stops the master, which
+            // supervisor starts again on the new numbers.
             // One second idle so a change from the page is acted on while the reader is
             // still looking at it.
             [

@@ -21,7 +21,8 @@ Rust extension. It gives an application four runtimes and a coroutine-scoped con
   Pusher-compatible subset so `laravel-echo` needs no client of its own (`src/Ws/`).
 
 All four are pools of one supervisor process, the SConcur **master**
-(`src/Servers/MasterRunner.php`), configured as `groups` in `config/sconcur.php`.
+(`src/Servers/MasterFactory.php` builds the library's `WorkerMaster`), configured as `groups`
+in `config/sconcur.php`.
 
 The container is coroutine-scoped in every process, with nothing to turn on: config,
 events, router, translator and view are swapped for coroutine-safe adapters, and
@@ -78,7 +79,7 @@ make cs-fixer-check     # check code style
 make cs-fixer-fix       # auto-fix code style
 make check              # cs-fixer, phpstan, tests
 make sconcur-status     # master status: groups and workers
-make sconcur-reload     # rolling restart of the worker pools
+make sconcur-stop       # stop the master; supervisor starts a fresh one
 ```
 
 After `make setup` the demo application answers on `http://localhost:${APP_PORT}`
@@ -91,18 +92,18 @@ ones talk to the live MySQL, RabbitMQ and Redis.
 
 Six containers, prefix `scl-`:
 
-- `nginx` — the only published entry point; proxies to the HTTP pool
+- `nginx` — the only published entry point; proxies to the HTTP and WebSocket pools
 - `php` — CLI only (composer, artisan, phpunit, analyzers). There is no php-fpm in
   this repository: HTTP is served by SConcur itself. It alone carries phpredis
   (`ext-redis`), for `PhpRedisParityTest`; `workers` and the package run without it.
 - `workers` — supervisor running `php demo/artisan sconcur:servers:master:start`
-- `mysql`, `rabbitmq`, `redis` — **in-memory** (`tmpfs`), state is wiped when the container is
-  recreated. Redis runs with a password, so the client's login path is exercised. The named-volume mounts sit beside them, commented out.
+- `mysql`, `rabbitmq`, `redis` — **in-memory** (`tmpfs`), state is wiped when the container
+  stops. Redis runs with a password, so the client's login path is exercised. The named-volume mounts sit beside them, commented out.
 
 `sconcur.so` is baked into the image: `docker/php/Dockerfile` reads the pinned
 `sconcur/sconcur` version out of `composer.lock` and downloads the matching release
 asset. **`composer.lock` must stay committed** — without it a fresh clone has nothing
-to pin against. The library version is pinned exactly (`0.15.0`, not a caret): the
+to pin against. The library version is pinned exactly (`0.18.0`, not a caret): the
 `.so` and the PHP side cross a protocol boundary that changes with the version.
 
 ## Architecture
@@ -121,7 +122,10 @@ src/View/AsyncViewFactory       — View::share per coroutine
 src/Http/                       — HttpServerRunner + LaravelHttpHandler; StreamedChunks +
                                   IterableResponseBody (a StreamedResponse built from chunks,
                                   read chunk by chunk in the request coroutine)
-src/Servers/MasterRunner        — wrapper over SConcur\Worker\MasterCli
+src/Servers/MasterFactory       — config('sconcur.master') → SConcur\Worker\WorkerMaster
+src/Servers/WorkerRoles         — what a forked worker of each role runs (WorkerRoleEnum),
+                                  after raising WorkerForked; MasterGroups finds a group
+                                  by role, ServerFlags turns its `server` block into flags
 src/Servers/WatchdogEventForwarder — the master's watchdog reports as the
                                   WorkerWatchdogTriggered event (listeners in
                                   config('sconcur.listeners'))
@@ -147,7 +151,8 @@ src/Filesystem/                 — SconcurLocalFilesystemAdapter + SconcurLocal
 src/Support/CooperativeSleep    — a retry pause: Sleeper in a coroutine, Sleep outside
 src/Support/Coroutine           — whether the caller runs in a coroutine the extension drives
                                   and may still wait in
-src/Support/ProcessMemory       — the resident set size of the process, for memory limits
+src/Support/ProcessMemory       — the resident set size of the process, for memory limits,
+                                  and its proportional share (Pss, SwapPss), for telemetry
 src/Tasks/                      — TaskPool, TaskPoolController, TaskRegistry,
                                   CooperativeSleeper, TaskPoolTelemetry, TaskPoolMetrics
 src/Tasks/Control/              — stop/restart through a cache key, from any container
@@ -177,23 +182,29 @@ Points worth knowing before changing anything:
 - **The config is published, not merged.** `config/sconcur.php` is a skeleton; the
   application owns every value including the defaults. Merging would let a deleted key
   quietly come back. Commands say so rather than running on an empty array.
-- **The adapters are installed in every process**, with no mode to detect. There used
-  to be an argv check and it was wrong — the master spawns a worker as
-  `artisan --address=… sconcur:servers:http:start --masterPid=N`, so the command name
-  is not argv[1] and the check answered no in the very processes it existed for.
-- **A group's `server` block is forwarded to its workers' argv verbatim.** Symfony
-  Console rejects flags a command does not declare, so `HttpStartCommand`,
-  `RabbitmqConsumerStartCommand` and `WsStartCommand` declare every one of them even
-  though `HttpServer::fromArgs` / `QueueConsumer::fromArgs` / `WsServer::fromArgs` are
-  what read them.
+- **The adapters are installed in every process**, with no mode to detect. A worker is
+  a fork of the master's artisan process, so no argv or command name tells a worker
+  apart from the master.
+- **Every worker is a fork of `sconcur:servers:master:start`.** The library's
+  `WorkerMaster` runs in the artisan process after the application booted, and a group's
+  role (`WorkerRoles`) runs the runner directly — no artisan command in between. The
+  master's process must make no asynchronous call before `run()` (the extension refuses
+  to fork a process running its runtime, `ForkRefusedException`) and none after it
+  (`WorkerWatchdogTriggered` listeners included); `MasterStartCommand` closes the DB and
+  Redis connections the boot opened, since a fork shares a socket rather than copying
+  it. There is no reload: new code or config is a new master (`master:stop`, supervisor
+  restarts it). A group's `server` block becomes `--name=value` flags for
+  `HttpServer::fromArgs` / `QueueConsumer::fromArgs` / `WsServer::fromArgs`, which refuse
+  an unknown flag — `ServerFlagsTest` holds the skeleton's keys to that. The `*:start`
+  commands declare the same flags for a run without a master.
 - **Nothing declares RabbitMQ topology.** Neither the publishing driver nor
   `QueueConsumer`. `sconcur:rabbitmq:declare` must run before the first publish and
   before the pool starts — it is on every install path (`make setup`), not a one-off.
 - **`SCONCUR_RABBITMQ_WORKER_COUNT=0` removes the group from the config entirely**, it
   does not set the pool to zero workers: to the master `workerCount: 0` means one
   worker per CPU. The `array_values(array_filter(...))` around the group list is load
-  bearing — `array_filter` preserves keys, and `MasterConfig::parseGroups` refuses a
-  non-list.
+  bearing — `array_filter` preserves keys, and `WorkerMaster` takes its groups as a
+  list.
 - **The ws bus subscriber must not outlive the connections.** `Scheduler::serve` stops
   accepting and then waits for every spawned coroutine before it exits, so a subscriber
   looping for ever holds the drain open until the master's shutdown timeout kills the
@@ -273,8 +284,9 @@ Points worth knowing before changing anything:
   key/value, the phpredis signatures read their option arrays, the rest refuse a map.
 - **Only a StreamedResponse built from chunks is streamed.** `Http\StreamedChunks` recognises
   Symfony's `StreamedResponse($iterable)` (the closure's `$chunks`), Laravel's
-  `response()->stream()` over a generator function (the closure's `$callback`) and a
-  generator callback; those go to `IterableResponseBody`, which advances the generator in the
+  `response()->stream()` over a generator function (the closure's `$callback`), its
+  `eventStream()` (the same plus `$endStreamWith`, over any callback returning an iterable;
+  the chunks are framed as Laravel's closure frames them) and a generator callback; those go to `IterableResponseBody`, which advances the generator in the
   request coroutine — a generator runs on the stack of whoever advances it, so no fiber, no
   output buffer, a chunk per `yield`, and `Kernel::terminate()` after the last one. The
   closure variables are Symfony's and Laravel's internals: when they change, the shape is no
@@ -300,8 +312,8 @@ Points worth knowing before changing anything:
   exports neither its `protocol` nor its `connection` module. So neither the flag nor the
   string is reachable from the extension, let alone from this package — changing it means
   patching sqlx. What is reachable is the statement: `WHERE NOT (col <=> ?)` leaves the
-  unchanged rows out, and then matched is changed. Both READMEs say so, and
-  `AffectedRowsTest` pins all three numbers against PDO.
+  unchanged rows out, and then matched is changed. Both halves of `docs/database.md` say
+  so, and `AffectedRowsTest` pins all three numbers against PDO.
 
 ## Tests
 
@@ -391,13 +403,15 @@ only is unfinished.
 act on — and a partial list is worse than none: PHPStan reads `@throws` as exhaustive
 and kills the `catch` blocks for whatever the list left out.
 
-The current state of `src/` is that it throws built-in exceptions directly
-(`RuntimeException` in `AbstractSconcurCommand`, `Database\Mysql\Connection`,
-`Database\Mysql\TransactionStack`, `Tasks\TaskRegistry`; `InvalidArgumentException` in
-`Translation\AsyncTranslator`). The library it integrates with does the opposite — it
-names a class per case under `SConcur\Exceptions\`. Aligning this package with that is
-worth doing but has not been done; write new code the way the surrounding file does
-and do not mass-convert as a side effect of an unrelated change.
+The current state of `src/` is that it mostly throws built-in exceptions directly
+(`RuntimeException` in `AbstractSconcurCommand`, `SConcurServiceProvider`,
+`Servers\MasterFactory`, `Database\Mysql\Connection`, `Database\Mysql\TransactionStack`,
+`Filesystem\SconcurLocalDiskFactory`, `Http\IterableResponseBody`, `Tasks\TaskRegistry`;
+`InvalidArgumentException` in `Redis\Connector` and `Translation\AsyncTranslator`); only
+`src/Redis/Exceptions/` names a class per case. The library it integrates with does the
+opposite — it names a class per case under `SConcur\Exceptions\`. Aligning the rest of
+this package with that is worth doing but has not been done; write new code the way the
+surrounding file does and do not mass-convert as a side effect of an unrelated change.
 
 ## Documentation style
 

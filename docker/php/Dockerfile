@@ -27,22 +27,17 @@ RUN curl -fSL --connect-timeout 10 --retry 3 \
         -o /usr/local/bin/pie && \
     chmod +x /usr/local/bin/pie
 
-# msgpack carries every payload across the PHP↔extension boundary and is what the library
-# itself requires (ext-msgpack: 3.0.1). Pinned exactly, like that constraint.
-RUN pie install msgpack/msgpack-php:3.0.1
-
-# pcntl — signal handling of the master and of every long-lived worker. pdo_mysql — the
-# PDO connection sconcur_mysql is compared against, in the demo and in the tests. zip —
-# composer extracts dist archives with it; without it, it shells out to unzip, which
-# works but is slower.
+# pdo_mysql — the PDO connection sconcur_mysql is compared against, in the demo and in
+# the tests. zip — composer extracts dist archives with it; without it, it shells out to
+# unzip, which works but is slower.
 #
-# Deliberately not here: sockets and bcmath. Nothing requires either — they appear only
+# Deliberately not here: pcntl — the master, the servers and the task pool take their
+# signals through the extension. Sockets and bcmath: nothing requires either — they appear only
 # as `suggest` in third-party packages (monolog's syslog-over-UDP, uuid/uri maths), and
 # the library's own telemetry writes to its unix socket through stream_socket_client,
 # which is a stream, not ext-sockets. Check with `composer why ext-<name>` before adding
 # one back.
 RUN docker-php-ext-install \
-        pcntl \
         pdo_mysql \
         zip
 

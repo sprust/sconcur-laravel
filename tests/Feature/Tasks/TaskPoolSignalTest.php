@@ -14,11 +14,13 @@ use SConcur\Laravel\Tasks\TaskPoolOptions;
 use SConcur\Laravel\Tasks\TaskPoolState;
 use SConcur\Laravel\Tasks\TaskRegistry;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
+use SConcur\Process\ProcessControl;
+use SConcur\Process\ProcessSignalEnum;
 use SConcur\WaitGroup;
 
 /**
  * What a signal's stop asks for. Under a master it can only be the watchdog or an
- * operator — the master reads no exit code of a worker it stops or rolls — and a clean
+ * operator — the master reads no exit code of a worker it stops — and a clean
  * exit would leave an `on-failure` pool down for good. Without a master it is Ctrl+C, and
  * a clean exit is what a terminal expects.
  *
@@ -53,6 +55,25 @@ class TaskPoolSignalTest extends BaseTestCase
     public function aSignalWithoutAMasterDoesNot(): void
     {
         self::assertFalse($this->restartWantedAfterASignal(masterPid: 0));
+    }
+
+    /**
+     * A real SIGTERM, sent to this process: the extension records it, and the controller
+     * takes it on its next pass. Watched for the length of the test only, so the signal
+     * never reaches PHP's default handling.
+     */
+    #[Test]
+    public function aSignalTheExtensionRecordedIsTaken(): void
+    {
+        ProcessControl::watchSignals([ProcessSignalEnum::Terminate]);
+
+        try {
+            self::assertTrue(ProcessControl::kill((int) getmypid(), ProcessSignalEnum::Terminate));
+
+            self::assertTrue($this->restartWantedAfterASignal(masterPid: 4711, handOver: false));
+        } finally {
+            ProcessControl::restoreSignals();
+        }
     }
 
     /**
@@ -98,6 +119,7 @@ class TaskPoolSignalTest extends BaseTestCase
         int $masterPid,
         ?TaskPoolState $taskPoolState = null,
         string $logged = 'signal received',
+        bool $handOver = true,
     ): bool {
         $app = $this->getApp();
 
@@ -111,7 +133,10 @@ class TaskPoolSignalTest extends BaseTestCase
             masterPid: $masterPid,
         );
 
-        $taskPoolController->signalled();
+        if ($handOver) {
+            $taskPoolController->signalled();
+        }
+
         $taskPoolController->run(WaitGroup::create());
 
         self::assertStringContainsString($logged, (string) file_get_contents($this->logPath));

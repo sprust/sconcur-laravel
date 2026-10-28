@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
+use SConcur\Laravel\Servers\Events\WorkerForked;
 use SConcur\Laravel\Servers\Events\WorkerWatchdogTriggered;
+use Workbench\App\Listeners\RecordWorkerForked;
 use Workbench\App\Listeners\RecordWorkerWatchdog;
 use Workbench\App\Tasks\CountingTask;
 use Workbench\App\Tasks\IdleTask;
@@ -27,14 +29,15 @@ return [
     ],
 
     'listeners' => [
+        WorkerForked::class => [
+            RecordWorkerForked::class,
+        ],
         WorkerWatchdogTriggered::class => [
             RecordWorkerWatchdog::class,
         ],
     ],
 
     'master' => [
-        'phpBinary'           => 'php',
-        'phpArgs'             => [],
         'panelPort'           => 0,
         'adminToken'          => '',
         'runtimeDir'          => storage_path('sconcur/runtime'),
@@ -47,25 +50,27 @@ return [
         'restartBackoffMs'    => 200,
         'maxRestartBackoffMs' => 5000,
         'watchdogTimeoutMs'   => 60000,
+        'readyTimeoutMs'      => 30000,
+        'accessLog'           => 'stdout',
+        'env'                 => [
+            'WORKBENCH_WORKER_ENV' => 'master',
+        ],
 
         'groups' => array_values(array_filter([
             [
-                'name'         => 'http',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => 2,
-                'workerArgs'   => ['sconcur:servers:http:start'],
-                'server'       => [
-                    'address'   => '127.0.0.1:28090',
-                    'reusePort' => true,
+                'name'        => 'http',
+                'role'        => 'http',
+                'workerCount' => 2,
+                'server'      => [
+                    'address' => '127.0.0.1:28090',
                 ],
             ],
 
             (int) env('SCONCUR_RABBITMQ_WORKER_COUNT', 0) < 1 ? null : [
-                'name'         => 'rabbitmq',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => (int) env('SCONCUR_RABBITMQ_WORKER_COUNT'),
-                'workerArgs'   => ['sconcur:servers:rabbitmq:start'],
-                'server'       => [
+                'name'        => 'rabbitmq',
+                'role'        => 'rabbitmq',
+                'workerCount' => (int) env('SCONCUR_RABBITMQ_WORKER_COUNT'),
+                'server'      => [
                     'queues' => [
                         [
                             'name'           => env('SCONCUR_RABBITMQ_QUEUE', 'tests'),
@@ -77,13 +82,11 @@ return [
             ],
 
             (int) env('SCONCUR_WS_WORKER_COUNT', 0) < 1 ? null : [
-                'name'         => 'ws',
-                'workerScript' => base_path('artisan'),
-                'workerCount'  => (int) env('SCONCUR_WS_WORKER_COUNT'),
-                'workerArgs'   => ['sconcur:servers:ws:start'],
-                'server'       => [
+                'name'        => 'ws',
+                'role'        => 'ws',
+                'workerCount' => (int) env('SCONCUR_WS_WORKER_COUNT'),
+                'server'      => [
                     'address'          => '127.0.0.1:28095',
-                    'reusePort'        => false,
                     'path'             => '/app/' . env('SCONCUR_WS_APP_KEY', 'testkey'),
                     'handlerTimeoutMs' => 0,
                 ],
@@ -91,11 +94,13 @@ return [
 
             [
                 'name'              => 'tasks',
-                'workerScript'      => base_path('artisan'),
+                'role'              => 'tasks',
                 'workerCount'       => 1,
-                'workerArgs'        => ['sconcur:tasks:start'],
                 'restartPolicy'     => 'on-failure',
                 'shutdownTimeoutMs' => 10000,
+                'env'               => [
+                    'WORKBENCH_WORKER_ENV' => 'tasks',
+                ],
             ],
         ])),
     ],
@@ -108,9 +113,8 @@ return [
                 env('SCONCUR_RABBITMQ_QUEUE', 'tests'),
             ],
 
-            'tries'     => 1,
-            'backoff'   => 0,
-            'memory_mb' => 128,
+            'tries'   => 1,
+            'backoff' => 0,
         ],
     ],
 

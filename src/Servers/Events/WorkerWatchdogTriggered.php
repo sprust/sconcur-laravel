@@ -12,8 +12,10 @@ use SConcur\Worker\WatchdogEvent;
  * with SIGKILL, `KillSurvived` when even that did not free the slot.
  *
  * Raised in the master process, inside its supervision tick, so a listener has to be
- * short: the master supervises nothing while it runs. Whatever a listener throws is
- * written to the master's journal and dropped.
+ * short: the master supervises nothing while it runs. It must make no asynchronous call
+ * either — no sconcur MySQL, Redis or HTTP client: the master's process refuses one, since
+ * a process running the extension's runtime cannot fork its workers. Whatever a listener
+ * throws is written to the master's journal and dropped.
  */
 readonly class WorkerWatchdogTriggered
 {

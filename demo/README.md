@@ -53,7 +53,11 @@ flowchart TB
 ```
 
 All four groups are pools of one master, configured in `demo/config/sconcur.php`.
-The master's telemetry panel is what the page's top section reads.
+The master's telemetry panel is what the page's top section reads. Memory is shown three
+ways: `rss` counts a page shared with other processes whole in each of them, and every
+worker shares the application the master loaded before the fork, so the RSS of a pool
+counts that copy once per worker; `pss` divides a shared page among the processes mapping
+it and adds up to the memory the pool takes; `swap pss` is the same share of swap.
 
 ## State after a restart
 
@@ -68,14 +72,14 @@ container down. To do it by hand: `make demo-reset`.
 | Endpoint | What it shows |
 |---|---|
 | `GET /` | the page: telemetry, and a control for each of the sections below |
-| `GET /api/health` | liveness; `make setup` and CI check this one |
+| `GET /api/health` | liveness |
 | `GET /api/concurrent?n=10&ms=200` | N cooperative pauses as coroutines of one `WaitGroup`, then the same N one after another. The concurrent leg takes about `ms`, the sequential one `n × ms` — same process, same thread |
 | `GET /api/notes` / `POST /api/notes` | Eloquent over the `sconcur_mysql` connection |
 | `POST /api/notes/bulk` | N inserts as coroutines, each in a transaction of its own — which holds on this connection because the nesting level is per coroutine and the extension pins each transaction to a physical connection |
 | `POST /api/jobs` | dispatches `DemoJob` to RabbitMQ over the `sconcur_rabbitmq` driver |
 | `GET /api/jobs` | what the consumer pool did with them, plus the `failed_jobs` count |
 | `GET /api/heartbeats` | the counter the periodic task pool bumps |
-| `GET /api/scaling` / `POST /api/scaling` | how many processes each pool runs and how many consumers the queue gets in each; a change rolls only the groups it affects |
+| `GET /api/scaling` / `POST /api/scaling` | how many processes each pool runs and how many consumers the queue gets in each; a change restarts the master |
 | `GET /api/ws` | what the page needs to open its socket: the app key and the path, never the secret |
 | `POST /api/ws/broadcast` | broadcasts `count` copies of `DemoBroadcast` on the `demo` channel, each numbered; `others=1` adds `toOthers()` |
 | `GET /api/telemetry` | the master's panel, folded into what the page draws |
@@ -158,25 +162,20 @@ package.
 ## Changing the pool sizes
 
 The **Pool sizes** panel writes the numbers to `demo/storage/app/scaling.json`, which
-`demo/config/sconcur.php` reads while it builds the master config, and asks for the
-affected groups to be rolled. `ws` is one of them: at one worker the bus still carries
-every broadcast, and above one two browsers land on different workers, which is when it
-starts carrying them somewhere the publisher could not reach on its own. Zero takes the
-group out of the config, like it does for `rabbitmq`. The roll itself is done by
-`ScalingTask` in the periodic task pool, not by the request and not by a queued job:
+`demo/config/sconcur.php` reads while it builds the master config, and asks for the master
+to be restarted: a master holds the config it was built from, and there is no reload. `ws`
+is one of the numbers: at one worker the bus still carries every broadcast, and above one
+two browsers land on different workers, which is when it starts carrying them somewhere
+the publisher could not reach on its own. Zero takes the group out of the config, like it
+does for `rabbitmq`.
 
-- reload waits for the roll to finish. An HTTP worker calling it would still be inside
-  that wait when its own turn to be replaced came — the server waiting for the handler
-  to drain, the handler waiting for the master — and the standoff ends at
-  `shutdownTimeoutMs` with the worker killed and the request cut;
-- a queued job has the same problem one pool over: rolling the `rabbitmq` group would
-  take the consumer down from under the very message doing the rolling.
-
-The task pool's own group is never one of the rolled ones, so it is the one process that
-can watch a roll from outside. It also has to re-read `config/sconcur.php` before it
-rolls: a long-lived process holds the config it started with, and reload hands the
-master whatever the caller has — without that it would roll the groups onto the old
-numbers and report success.
+The restart is done by `ScalingTask` in the periodic task pool, not by the request: the
+request is served by a worker of the very master it would be stopping. The task asks the
+master to stop — it removes the state file the master watches — and does not wait, since
+the pool is one of that master's workers too. Supervisor starts a fresh master, which
+reads the stored numbers. Every pool comes up again, and while the new master loads
+nobody listens on the port: the page says the workers are restarting and carries on once
+they answer.
 
 Setting the consumer processes to `0` is meaningful and worth trying: below one the group
 leaves the master config entirely, which is the documented way to turn the pool off.
@@ -198,21 +197,20 @@ curl -sS -X POST localhost:48081/api/jobs \
 
 # The task pool, controlled from another container through a cache key rather than a pid.
 # `stop` without --task ends the pool's process; its group is restartPolicy=on-failure,
-# so a clean exit is left down on purpose and `make sconcur-reload` is what brings it
-# back.
+# so a clean exit is left down on purpose and a fresh master is what brings it back.
 make tasks-stop                                    # the heartbeat counter freezes
-make sconcur-reload                                # it moves again, in a fresh process
+make sconcur-stop                                  # it moves again, under a new master
 
 # One task at a time: stop parks it and the pool keeps running, restart brings it back.
 make demo-art c='sconcur:tasks:stop --task=heartbeat'
 make demo-art c='sconcur:tasks:restart --task=heartbeat'
 
-# Rolling reload: the workers still listening keep the port served.
-make sconcur-reload
+# A new master: supervisor starts it once the old one has drained its workers.
+make sconcur-stop
 make sconcur-status
 
 # The same pages on the ordinary PDO connection — DB_CONNECTION=mysql in .env, then:
-make sconcur-reload
+make sconcur-stop
 ```
 
 Switching `DB_CONNECTION` to `mysql` is the comparison the package exists for.

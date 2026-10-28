@@ -17,12 +17,13 @@ use SConcur\Exceptions\CoroutineTimeoutException;
 use SConcur\Exceptions\FlowStoppedException;
 use SConcur\Features\Amqp\Consumer\QueueConsumer;
 use SConcur\Features\Amqp\Delivery;
+use SConcur\Scheduler\Scheduler;
 use Throwable;
 
 /**
  * Runs a queue-consumer pool in the current process, the way HttpServerRunner runs an
- * HTTP server: the master spawns this as a group's worker, one process per slot, and
- * each process reads all of its queues at once with a coroutine per delivery.
+ * HTTP server: every worker the master forks for the `rabbitmq` group runs one, and each
+ * process reads all of its queues at once with a coroutine per delivery.
  *
  * Illuminate\Queue\Worker::daemon() is deliberately not used. It is a strictly
  * sequential loop — getNextJob() -> pop() -> runJob() -> sleep() — one job at a time,
@@ -40,6 +41,36 @@ readonly class ConsumerRunner
         private string $connectionName,
         private WorkerOptions $options,
     ) {
+    }
+
+    /**
+     * The runner config('sconcur.queue.rabbitmq') describes, for both of its callers: a
+     * worker of the master's `rabbitmq` group, and the start command, which may override
+     * the connection and the two retry settings from its own options.
+     *
+     * `timeout` is deliberately left at zero: the deadline on a job belongs to the consumer
+     * runtime's handlerTimeoutMs, which unwinds the coroutine, rather than to the worker's
+     * SIGALRM, which would take the process down with every other handler running in it.
+     * `memory` is not set at all: only daemon() reads it, and the limit that stops a
+     * consumer is its own maxMemoryBytes.
+     */
+    public static function configured(
+        QueueConsumer $consumer,
+        ?string $connectionName = null,
+        ?int $tries = null,
+        ?int $backoff = null,
+    ): self {
+        $config = (array) config('sconcur.queue.rabbitmq', []);
+
+        return new self(
+            consumer: $consumer,
+            connectionName: $connectionName ?? (string) ($config['connection'] ?? 'sconcur_rabbitmq'),
+            options: new WorkerOptions(
+                backoff: $backoff ?? (int) ($config['backoff'] ?? 0),
+                timeout: 0,
+                maxTries: $tries ?? (int) ($config['tries'] ?? 1),
+            ),
+        );
     }
 
     public function run(Application $app): int
@@ -61,8 +92,21 @@ readonly class ConsumerRunner
 
         $this->logFailedJobs($app);
 
+        $connection = $queue->getConnection();
+
+        // Up once the broker took the connection, not at the consumer's first wait: the
+        // broker refuses a queue nobody declared within a millisecond, and every slot
+        // failing before it is up would stop the master and every other group with it. A
+        // missing queue is therefore a restart with backoff, while a broker that cannot be
+        // reached or refuses the login is still a failed start. A no-op without a master.
+        if (!$connection->isOpen()) {
+            $connection->connect();
+        }
+
+        Scheduler::get()->markReady();
+
         return $this->consumer->consume(
-            connection: $queue->getConnection(),
+            connection: $connection,
             handler: function (Delivery $delivery) use ($queue, $worker, $exceptions): void {
                 $job = new Job(
                     // The contract's Application is not the concrete Container the base

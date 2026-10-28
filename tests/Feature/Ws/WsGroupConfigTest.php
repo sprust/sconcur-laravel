@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace SConcur\Laravel\Tests\Feature\Ws;
 
 use PHPUnit\Framework\Attributes\Test;
-use SConcur\Laravel\Console\WsStartCommand;
+use SConcur\Laravel\Servers\MasterGroups;
+use SConcur\Laravel\Servers\WorkerRoleEnum;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
-use SConcur\Laravel\Ws\WsGroupConfig;
 
 /**
  * The package's own config skeleton, evaluated the way an application's published copy
@@ -48,15 +48,23 @@ class WsGroupConfigTest extends BaseTestCase
     }
 
     #[Test]
-    public function theGroupRunsTheWsCommandThroughArtisan(): void
+    public function theGroupRunsTheWsRole(): void
     {
         $_SERVER['SCONCUR_WS_WORKER_COUNT'] = '2';
 
         $group = $this->existingWsGroup();
 
-        self::assertSame(base_path('artisan'), $group['workerScript']);
-        self::assertSame(['sconcur:servers:ws:start'], $group['workerArgs']);
+        self::assertSame(WorkerRoleEnum::Ws->value, $group['role']);
         self::assertSame(2, $group['workerCount']);
+    }
+
+    /** The servers bind with SO_REUSEPORT on their own, and fromArgs refuses the flag. */
+    #[Test]
+    public function theServerBlockCarriesNoReusePort(): void
+    {
+        $_SERVER['SCONCUR_WS_WORKER_COUNT'] = '2';
+
+        self::assertArrayNotHasKey('reusePort', $this->existingWsGroup()['server']);
     }
 
     /**
@@ -99,14 +107,14 @@ class WsGroupConfigTest extends BaseTestCase
     }
 
     #[Test]
-    public function theServerBlockIsReadOffTheGroupThatRunsTheCommand(): void
+    public function theServerBlockIsReadOffTheGroupThatRunsTheRole(): void
     {
         config()->set('sconcur.master.groups', [
-            ['name' => 'http', 'workerArgs' => ['sconcur:servers:http:start'], 'server' => ['address' => 'wrong']],
-            ['name' => 'ws', 'workerArgs' => [WsStartCommand::NAME], 'server' => ['address' => 'right']],
+            ['name' => 'ws', 'role' => 'http', 'server' => ['address' => 'wrong']],
+            ['name' => 'sockets', 'role' => 'ws', 'server' => ['address' => 'right']],
         ]);
 
-        self::assertSame(['address' => 'right'], WsGroupConfig::server(WsStartCommand::NAME));
+        self::assertSame(['address' => 'right'], MasterGroups::server(WorkerRoleEnum::Ws));
     }
 
     /** No group at all is not a failure: a standalone run just gets the library defaults. */
@@ -115,8 +123,8 @@ class WsGroupConfigTest extends BaseTestCase
     {
         config()->set('sconcur.master.groups', []);
 
-        self::assertSame([], WsGroupConfig::server(WsStartCommand::NAME));
-        self::assertSame(1, WsGroupConfig::workerCount(WsStartCommand::NAME));
+        self::assertSame([], MasterGroups::server(WorkerRoleEnum::Ws));
+        self::assertSame(1, MasterGroups::workerCount(WorkerRoleEnum::Ws));
     }
 
     #[Test]
@@ -124,7 +132,7 @@ class WsGroupConfigTest extends BaseTestCase
     {
         config()->set('sconcur.master.groups', ['not an array', ['name' => 'ws']]);
 
-        self::assertSame([], WsGroupConfig::server(WsStartCommand::NAME));
+        self::assertSame([], MasterGroups::server(WorkerRoleEnum::Ws));
     }
 
     /**

@@ -27,9 +27,14 @@ What happens if it is skipped:
 - the pool doing `basic.consume` on a queue that does not exist gets
   `SConcur\Exceptions\Amqp\QueueException` reading
   `Server channel error: 404, message: NOT_FOUND - no queue 'default' in vhost '/'`.
-  The worker exits `1`, the master brings up a replacement, and round it goes with growing
-  backoff: the pool reads nothing, and in the telemetry panel its group stands with no
-  workers.
+  The first open is not retried: the worker exits non-zero, and the master starts it again
+  with a growing pause, up to `maxRestartBackoffMs`, for as long as the queue is missing.
+  The `rabbitmq` worker tells the master it is up once the broker has taken its connection,
+  before the consumer opens the queues, so this failure is an ordinary restart rather than a
+  failed start: the master and its other groups, HTTP included, keep running, and the
+  broker's error shows only in the worker's log. A broker that cannot be reached or refuses
+  the login is still a failed start
+  ([configuration.md](configuration.md#the-rabbitmq-group-and-its-consumers)).
 
 The command declares what is listed in `sconcur.queue.rabbitmq.queues`, with the flags
 `durable`, not `exclusive`, not `autoDelete` and no arguments — the same ones
@@ -60,9 +65,11 @@ Three things hold that together, and none of them can be changed unilaterally:
 ```php
 // config/queue.php
 'sconcur_rabbitmq' => [
-    'driver'    => 'sconcur_rabbitmq',
-    'queue'     => env('RABBITMQ_QUEUE', 'default'),
-    'dsn'       => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'driver'                  => 'sconcur_rabbitmq',
+    'queue'                   => env('RABBITMQ_QUEUE', 'default'),
+    'dsn'                     => env('SCONCUR_RABBITMQ_DSN'),   // amqp://user:pass@host:5672/%2f
+    'confirm_publishes'       => false,
+    'confirm_timeout_seconds' => 5.0,
 ],
 ```
 
@@ -84,10 +91,19 @@ say: an ordinary publish on a routing key nothing is bound to is silently discar
 broker — while `publishConfirmed` is mandatory by default and throws
 `UnroutableMessageException`.
 
+`confirm_publishes` (`false` by default) sends every other publish through
+`publishConfirmed` as well, at the cost of a round trip to the broker per publish.
+`confirm_timeout_seconds` (`5.0` by default) is how long a confirmed publish, delayed or
+not, waits for the broker's confirm.
+
 ## The consumer
 
-The pool is a group of the master, so it lives under the same supervisor as HTTP and
-reports into the same telemetry panel (the `consumers` section).
+The pool is the master's `rabbitmq` group, so it lives under the same supervisor as HTTP
+and reports into the same telemetry panel (the `consumers` section). A worker of the group
+runs `ConsumerRunner` itself, on a `QueueConsumer` built by `QueueConsumer::fromArgs()`
+from the group's `server` block. `sconcur:servers:rabbitmq:start` runs the same consumer in
+the foreground, outside the master; given none of the consumer's flags, it takes them from
+that `server` block.
 
 ```
 php artisan sconcur:rabbitmq:declare
@@ -110,6 +126,12 @@ next one. It is off by default because a deadline does not slow down the job it 
 it refuses it, and that is for the application, which knows its jobs, to decide.
 `WorkerOptions::$timeout` is deliberately zero next to it: the Laravel worker's `SIGALRM`
 would kill the process along with every handler running beside it.
+
+`maxMessages`, `maxRuntimeSeconds` and `maxMemoryBytes` (the PHP heap) stop a worker once
+it has finished the handlers it is running. Under the master that is a stop at a limit:
+the replacement is forked at once, without the crash backoff, and `maxMessages` is spread —
+each worker stops somewhere between the limit and half again as many. Outside the master
+the limit is exact.
 
 The master's watchdog is a different thing and it is on. A job that holds the PHP thread
 in a native call — a PDO query, `curl`, `sleep()` — for longer than `watchdogTimeoutMs`

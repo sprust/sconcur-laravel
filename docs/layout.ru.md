@@ -8,10 +8,12 @@
 config/sconcur.php             — конфиг (panel_host, scoped_services, filesystem, listeners, master + groups, queue, ws, tasks)
 src/SConcurServiceProvider.php — провайдер (команды + проводка адаптеров в воркере)
 src/Console/                   — артизан-команды
-src/Servers/                   — MasterRunner (обёртка над SConcur\Worker\MasterCli),
-                                 WatchdogEventForwarder, Events/WorkerWatchdogTriggered
+src/Servers/                   — MasterFactory (конфиг → SConcur\Worker\WorkerMaster), WorkerRoles +
+                                 WorkerRoleEnum (что выполняет форкнутый воркер), MasterGroups, ServerFlags,
+                                 WatchdogEventForwarder, Events/WorkerForked, Events/WorkerWatchdogTriggered
 src/Queue/Rabbitmq/            — драйвер очереди и консьюмер-пул (Connector, Queue, Job, ConsumerRunner)
-src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам)
+src/Database/                  — TransactionStore (уровень вложенности транзакции, по корутинам),
+                                 CoroutineTransactionsManager (менеджер транзакций Laravel, по корутинам)
 src/Database/Mysql/            — соединение sconcur_mysql (Connector, Connection, Dsn, TransactionStack)
 src/Redis/                     — Redis-клиент sconcur (Connector, Connection, Dsn, CommandBatch,
                                  CommandArguments, BlockingCommands, KeyPrefix, PhpRedisArguments,
@@ -21,7 +23,7 @@ src/Filesystem/                — диск sconcur_local и фасад File н�
                                  FilesFeatureCall, LocalPaths)
 src/Cache/Redis/               — кэш-стор sconcur_redis (Store, Lock, StoreFactory)
 src/Support/                   — CooperativeSleep (пауза между попытками, не замораживающая воркер),
-                                 ProcessMemory (резидентная память процесса, RSS),
+                                 ProcessMemory (резидентная память процесса и её пропорциональная доля),
                                  Coroutine (выполняется ли вызывающий код в корутине расширения)
 src/Tasks/                     — пул периодических задач (TaskPool, TaskPoolController, TaskRegistry,
                                  CooperativeSleeper, TaskPoolTelemetry + TaskPoolMetrics)

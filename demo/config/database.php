@@ -40,7 +40,7 @@ return [
     | `backoff_*`, which the sconcur client does not read and refuses.
     |
     | `timeout_ms`, `pool_size` and `conn_max_lifetime_ms` are the feature's own; left
-    | out, the extension's defaults stand (30000 ms, 4 connections, no lifetime limit).
+    | out, the feature's defaults stand (30000 ms, 4 connections, no lifetime limit).
     */
     'redis' => [
         'client' => env('REDIS_CLIENT', 'sconcur'),

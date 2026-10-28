@@ -92,7 +92,7 @@ composer:
 # Resolves composer.lock in a throwaway container, off no image of this project. The
 # image cannot build without the lock — it reads the sconcur version out of it — so the
 # lock cannot be produced by the container the lock produces. `config.platform` in
-# composer.json pins the PHP and msgpack versions the resolution targets, so what this
+# composer.json pins the PHP version the resolution targets, so what this
 # writes is what the built image would have written.
 composer-lock:
 	docker run --rm -v "$(CURDIR)":/app -w /app -e COMPOSER_HOME=/tmp/composer \
@@ -120,22 +120,13 @@ tinker:
 queues-declare:
 	make workers-art c='sconcur:rabbitmq:declare'
 
-# Master control. reload replaces the worker processes and leaves the master up; stop
-# takes the master down too, and supervisor starts a fresh one.
+# Master control. There is no reload: the master holds the application it loaded, so
+# stop is how new code or a new config is taken up — supervisor starts a fresh master.
 sconcur-status:
 	make workers-art c='sconcur:servers:master:status'
 
-sconcur-reload:
-	make workers-art c='sconcur:servers:master:reload'
-
 sconcur-stop:
 	make workers-art c='sconcur:servers:master:stop'
-
-http-reload:
-	make workers-art c='sconcur:servers:master:reload --group=http'
-
-rabbitmq-reload:
-	make workers-art c='sconcur:servers:master:reload --group=rabbitmq'
 
 # Deliberately from the CLI container: the task pool is reached through a cache key, not
 # through a pid, which is the whole point of that channel.

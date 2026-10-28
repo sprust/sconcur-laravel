@@ -168,6 +168,12 @@
 
     <div class="panel">
         <h2>Master telemetry <span class="muted" id="telemetry-state"></span></h2>
+        <p class="muted" style="margin-top:0">
+            Every worker is a fork of the master and shares the application it loaded.
+            <code>rss</code> counts a shared page whole in every process that maps it;
+            <code>pss</code> divides it among them, so it adds up across the pool to the
+            memory the pool takes. <code>swap pss</code> is the same share of swap.
+        </p>
         <div class="tiles" id="telemetry-tiles"></div>
         <h2 style="margin:16px 0 8px">Groups</h2>
         <div class="scroll"><table id="groups-table"></table></div>
@@ -180,10 +186,11 @@
             <h2>Pool sizes</h2>
             <p class="muted" style="margin-top:0">
                 How many processes each pool runs, and how many consumers the RabbitMQ
-                queue gets inside each of them. Applying rolls only the groups that
-                changed — the rolling is done by the task pool, the one pool this never
-                touches. Raising <code>ws</code> above one puts two browsers on different
-                workers, which is what the fanout bus is there for; rolling it drops the
+                queue gets inside each of them. Applying restarts the master — the task
+                pool asks it to stop, and supervisor starts a new one with these numbers.
+                Every pool comes up again, and for the moment the new master loads nobody
+                listens. Raising <code>ws</code> above one puts two browsers on different
+                workers, which is what the fanout bus is there for; the restart drops the
                 open sockets, and the page reconnects.
             </p>
             <div class="controls">
@@ -278,8 +285,8 @@
             <p class="muted" style="margin-top:0">
                 A counter the task pool bumps on its own.
                 <code>make tasks-stop</code> freezes it — from another container,
-                through a cache key rather than a pid. <code>make sconcur-reload</code>
-                starts it again.
+                through a cache key rather than a pid. <code>make sconcur-stop</code>
+                starts it again, with a new master.
             </p>
             <pre id="out-heartbeats">—</pre>
         </div>
@@ -300,7 +307,7 @@
 
     const show = (id, data) => { $(id).textContent = JSON.stringify(data, null, 2); };
 
-    // Every answer goes through here, because during a roll the page is talking to a
+    // Every answer goes through here, because during a restart the page is talking to a
     // pool that is being replaced: nginx answers 502 with an HTML error page, and
     // response.json() on that reports a parse error about an unexpected '<' — which
     // tells the reader nothing about what is actually happening.
@@ -310,7 +317,7 @@
         try {
             response = await fetch(url, options);
         } catch (error) {
-            throw new Error('unreachable — the workers may be rolling');
+            throw new Error('unreachable — the workers may be restarting');
         }
 
         const body = await response.text();
@@ -319,7 +326,7 @@
             return JSON.parse(body);
         } catch (error) {
             if (response.status === 502 || response.status === 503 || response.status === 504) {
-                throw new Error(`the workers are rolling (${response.status})`);
+                throw new Error(`the workers are restarting (${response.status})`);
             }
 
             throw new Error(`${response.status} ${response.statusText || 'unexpected answer'}`);
@@ -369,6 +376,10 @@
         ? [work.inProcess, work.finished, work.refused, work.avgMs.toFixed(1)]
         : ['—', '—', '—', '—'];
 
+    const memoryCells = (entry) => [
+        bytes(entry.memoryRssBytes), bytes(entry.memoryPssBytes), bytes(entry.memorySwapPssBytes),
+    ];
+
     const renderTelemetry = (data) => {
         if (!data.available) {
             $('telemetry-state').innerHTML = `<span class="bad">unavailable — ${data.reason}</span>`;
@@ -389,30 +400,33 @@
             ['avg ms', data.totals.work ? data.totals.work.avgMs.toFixed(1) : '—'],
             ['cpu %', data.totals.cpuPercent.toFixed(1)],
             ['rss', bytes(data.totals.memoryRssBytes)],
+            ['pss', bytes(data.totals.memoryPssBytes)],
+            ['swap pss', bytes(data.totals.memorySwapPssBytes)],
             ['ext tasks', data.totals.runtimeTasks],
             ['master rss', bytes(data.master.memoryRssBytes)],
+            ['master pss', bytes(data.master.memoryPssBytes)],
         ].map(([key, value]) => `<div class="tile"><div class="k">${key}</div><div class="v">${value}</div></div>`).join('');
 
         $('groups-table').innerHTML =
-            row(['group', 'workers', 'hung', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'ext tasks'], 'th')
+            row(['group', 'workers', 'hung', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'pss', 'swap pss', 'ext tasks'], 'th')
             + data.groups.map((group) => row([
                 group.name, group.workersTotal, group.workersHung,
                 ...workCells(group.work),
-                group.cpuPercent.toFixed(1), bytes(group.memoryRssBytes), group.runtimeTasks,
+                group.cpuPercent.toFixed(1), ...memoryCells(group), group.runtimeTasks,
             ])).join('');
 
         $('workers-table').innerHTML =
-            row(['pid', 'group', 'uptime s', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'ext tasks'], 'th')
+            row(['pid', 'group', 'uptime s', 'in process', 'finished', 'refused', 'avg ms', 'cpu %', 'rss', 'pss', 'swap pss', 'ext tasks'], 'th')
             + data.workers.map((worker) => row([
                 worker.hung ? `<span class="bad">${worker.pid}</span>` : worker.pid,
                 worker.group, worker.uptimeSeconds.toFixed(0),
                 ...workCells(worker.work),
-                worker.cpuPercent.toFixed(1), bytes(worker.memoryRssBytes), worker.runtimeTasks,
+                worker.cpuPercent.toFixed(1), ...memoryCells(worker), worker.runtimeTasks,
             ])).join('');
     };
 
     // A failed poll leaves the last numbers on screen and says so in the status line,
-    // rather than blanking the tables: a roll takes a few seconds, and a page that
+    // rather than blanking the tables: a restart takes a few seconds, and a page that
     // empties itself and fills back up is harder to read than one that holds still and
     // tells you it is waiting.
     const poll = async () => {

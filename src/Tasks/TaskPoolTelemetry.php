@@ -30,8 +30,8 @@ use SConcur\Laravel\Support\ProcessMemory;
  * dropped frame costs one second of freshness, nothing more. The master takes a closed
  * connection to mean the worker left, so the socket is held open for the pool's life.
  *
- * What a PHP-side sampler can and cannot know: RSS and CPU come from /proc, which is the
- * same source the extension reads. The count of live tasks in the extension runtime does
+ * What a PHP-side sampler can and cannot know: memory (RSS, Pss, SwapPss) and CPU come
+ * from /proc, which is the same source the extension reads. The count of live tasks in the extension runtime does
  * not exist for this worker and goes out as zero. None of the three workload sections is sent —
  * requests belong to a server and connections to a socket server. The third,
  * `consumers`, is sent: a tick is to a task what a delivery is to a consumer, so the
@@ -43,6 +43,14 @@ class TaskPoolTelemetry
     /** The master flags a worker hung after 15 s without a snapshot; report well inside that. */
     protected const int INTERVAL_MS = 1000;
 
+    /**
+     * How often memory is read afresh — the cadence the extension's sampler reads a
+     * worker's own at (ext/src/stats/metrics.rs). The proportional share costs a walk of
+     * the page tables, and memory describes the process over minutes, not seconds; the
+     * snapshots in between repeat the last reading.
+     */
+    protected const int MEMORY_INTERVAL_MS = 5000;
+
     /** The kernel clock tick, read once per process; see clockTicksPerSecond(). */
     protected static ?float $clockTicks = null;
 
@@ -52,6 +60,15 @@ class TaskPoolTelemetry
     protected float $startedAt;
 
     protected float $dueAt = 0;
+
+    protected float $memoryDueAt = 0;
+
+    /** @var array{rssBytes: int, pssBytes: int, swapPssBytes: int} */
+    protected array $memory = [
+        'rssBytes'     => 0,
+        'pssBytes'     => 0,
+        'swapPssBytes' => 0,
+    ];
 
     /**
      * Previous /proc/self/stat sample: [cpu seconds, wall clock], for the CPU delta.
@@ -175,18 +192,14 @@ class TaskPoolTelemetry
      */
     protected function snapshot(float $now): array
     {
-        $rssBytes = $this->rssBytes();
-
         return [
             'name'          => $this->name,
             'pid'           => getmypid(),
             'updatedAtMs'   => (int) round($now * 1000),
             'startedAtMs'   => (int) round($this->startedAt * 1000),
             'uptimeSeconds' => round($now - $this->startedAt, 3),
-            'memory'        => [
-                'rssBytes' => $rssBytes,
-            ],
-            'cpuPercent' => $this->cpuPercent($now),
+            'memory'        => $this->memory($now),
+            'cpuPercent'    => $this->cpuPercent($now),
             // The pool runs no extension runtime of its own, so it has no tasks there to
             // count. Reported rather than omitted: the field is part of every snapshot,
             // and a zero says "none" where a missing key says nothing.
@@ -198,10 +211,24 @@ class TaskPoolTelemetry
         ];
     }
 
-    /** RSS of the whole process, the same field the extension's sampler reads. */
-    protected function rssBytes(): int
+    /**
+     * Memory of the whole process, the same fields the extension's sampler reads: the
+     * resident set size, and its proportional share and the same share of swap.
+     *
+     * @return array{rssBytes: int, pssBytes: int, swapPssBytes: int}
+     */
+    protected function memory(float $now): array
     {
-        return $this->processMemory->rssBytes();
+        if ($now < $this->memoryDueAt) {
+            return $this->memory;
+        }
+
+        $this->memoryDueAt = $now + self::MEMORY_INTERVAL_MS / 1000;
+
+        return $this->memory = [
+            'rssBytes' => $this->processMemory->rssBytes(),
+            ...$this->processMemory->proportionalShareBytes(),
+        ];
     }
 
     /**

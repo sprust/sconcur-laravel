@@ -257,6 +257,34 @@ class FacadeTest extends BaseRedisTestCase
         self::assertSame(['incr'], $failed);
     }
 
+    /** Not a command: no event is raised for it, and the connection answers after it. */
+    #[Test]
+    public function disconnectSendsNothingAndLeavesTheConnectionWorking(): void
+    {
+        $manager = $this->manager();
+
+        $manager->enableEvents();
+        $manager->purge();
+
+        $commands = [];
+
+        $connection = $this->redis();
+
+        $connection->listen(static function (CommandExecuted $event) use (&$commands): void {
+            $commands[] = $event->command;
+        });
+
+        $connection->listenForFailures(static function (CommandFailed $event) use (&$commands): void {
+            $commands[] = $event->command;
+        });
+
+        $connection->disconnect();
+
+        self::assertSame([], $commands);
+        self::assertTrue($connection->command('set', ['greeting', 'hello']));
+        self::assertSame('hello', $connection->command('get', ['greeting']));
+    }
+
     /**
      * A subscriber and a publisher in two coroutines of one process. The publisher repeats
      * until PUBLISH counts a receiver, because it cannot know when the SUBSCRIBE landed. The
