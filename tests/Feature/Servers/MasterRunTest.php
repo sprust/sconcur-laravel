@@ -132,13 +132,23 @@ class MasterRunTest extends BaseTestCase
     #[Test]
     public function aBrokerThatRefusesTheLoginStopsTheMaster(): void
     {
+        // The broker of this environment, the compose network's or CI's, with only the
+        // password changed: an address that does not resolve would fail the start too,
+        // and for a reason that is not the one under test.
+        $dsn = (string) getenv('SCONCUR_RABBITMQ_DSN');
+
+        self::assertMatchesRegularExpression('#^amqp://[^:/@]+:[^@]+@#', $dsn);
+
+        $wrongDsn = (string) preg_replace('#^(amqp://[^:/@]+:)[^@]+@#', '$1wrong-password@', $dsn);
+
         $this->startMaster([
             'SCONCUR_RABBITMQ_WORKER_COUNT' => '1',
-            'SCONCUR_RABBITMQ_DSN'          => 'amqp://scl_user:wrong-password@scl-rabbitmq:5672/%2f',
+            'SCONCUR_RABBITMQ_DSN'          => $wrongDsn,
         ]);
 
         self::assertSame(70, $this->exitCode(), (string) file_get_contents($this->output));
         self::assertStringContainsString('group rabbitmq: no worker came up', (string) file_get_contents($this->output));
+        self::assertStringContainsString('ACCESS_REFUSED', (string) file_get_contents($this->output));
     }
 
     #[Test]
