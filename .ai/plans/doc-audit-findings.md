@@ -10,13 +10,15 @@
 поднялся; когда так падали все слоты группы, `WorkerGroup::neverCameUp()` останавливал
 мастер с кодом 70, HTTP вместе с ним, а supervisor запускал его в ту же ошибку.
 
-Сделано: роль `rabbitmq` (`src/Servers/WorkerRoles.php`) вызывает
-`Scheduler::get()->markReady()` до `consume()`. Падение теперь обычный перезапуск с
-backoff, мастер и HTTP живут. Цена: группа, которая не поднимется никогда, не остановит
-мастер кодом 70, ошибка брокера видна только в журнале воркера. Слушатели `WorkerForked`
-по-прежнему выполняются до `markReady()`, так что их исключение — всё ещё неудачный старт.
-Тест: `MasterRunTest::aQueueThatIsNotDeclaredDoesNotStopTheMaster` (без правки падает с
-`stopping with code 70`). Доки: `docs/queue*.md`.
+Сделано: `ConsumerRunner::run()` открывает AMQP-соединение и только потом вызывает
+`Scheduler::get()->markReady()`, затем `consume()`. Необъявленная очередь — обычный
+перезапуск с backoff, мастер и HTTP живут. Всё, что падает раньше, — недоступный брокер,
+отвергнутый логин, исключение слушателя `WorkerForked`, отвергнутый `QueueConsumer::fromArgs()`
+конфиг — по-прежнему неудачный старт и код 70. (Первая версия ставила `markReady()` в роль до
+всего этого и тем глушила защиту целиком — поймано code-review.) Тесты:
+`MasterRunTest::aQueueThatIsNotDeclaredDoesNotStopTheMaster` (без правки — `stopping with
+code 70`) и `MasterRunTest::aBrokerThatRefusesTheLoginStopsTheMaster`. Доки:
+`docs/queue*.md`, `docs/configuration*.md`.
 
 Issue в библиотеку (не заведён):
 
@@ -39,7 +41,9 @@ Issue в библиотеку (не заведён):
 
 `src/Http/StreamedChunks.php` узнаёт замыкание `eventStream()` по `$endStreamWith` рядом с
 `$callback` и отдаёт события по одному на кусок, размеченные так же, как их печатает
-`ResponseFactory::eventStream()` (`StreamedEvent`, `Js::encode`, закрывающее событие).
+`ResponseFactory::eventStream()` (`StreamedEvent`, `Js::encode` для сообщений, закрывающее
+событие — как есть, без JSON). Колбэк не обязан быть генератором: обходится то, что он
+вернул.
 `connection_aborted()` не повторяется: ушедший клиент обрывает чтение генератора сам.
 Тест: `StreamedResponseTest::laravelsEventStreamIsReadAnEventPerChunk` сравнивает байты с
 нативным выводом замыкания. Доки: `docs/http*.md`, `.ai/README.md`.
@@ -61,7 +65,8 @@ Issue в библиотеку (не заведён):
 
 ## 7. Мелочи
 
-- `sconcur:extension:load` без аргумента создаёт `servers/sconcur` — сделано.
+- `sconcur:extension:load` без аргумента создаёт `servers/sconcur`; если там уже лежит
+  файл (`.so` от прежней версии команды), говорит об этом — `ExtensionLoadCommandTest`.
 - `TaskPoolController::finished()`: недостижимая ветка удалена — дедлайн ставят только
   `requestStop()` и повторный сигнал, оба при `stopRequested`, который не сбрасывается.
 - Раздел про confirms перенесён из `docs/database*.md` в «The connection» `docs/queue*.md`.

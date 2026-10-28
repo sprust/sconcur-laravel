@@ -63,8 +63,8 @@ php artisan sconcur:extension:status
 ```
 
 The argument is the destination: a file path, or an existing directory the file is saved
-to as `sconcur.so`; the directory must exist either way. Without an argument the target is
-`base_path('servers/sconcur')`, which has to be an existing directory, and the extension
+to as `sconcur.so`; the directory an argument names must exist either way. Without an argument the target is
+the directory `base_path('servers/sconcur')`, created when it is missing, and the extension
 then has to be enabled with a flag (`php -d extension=servers/sconcur/sconcur.so`): fine
 for a look, not for a master under a process supervisor.
 

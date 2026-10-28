@@ -17,6 +17,7 @@ use Laminas\Diactoros\ServerRequest;
 use Laminas\Diactoros\ServerRequestFactory;
 use Laminas\Diactoros\StreamFactory;
 use Laminas\Diactoros\UploadedFileFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ResponseInterface;
 use RuntimeException;
@@ -27,6 +28,7 @@ use SConcur\Laravel\Support\Coroutine;
 use SConcur\Laravel\Tests\Feature\BaseTestCase;
 use SConcur\Laravel\Tests\Feature\MeasuresStallsTrait;
 use SConcur\WaitGroup;
+use Stringable;
 use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
 use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -122,7 +124,10 @@ class StreamedResponseTest extends BaseTestCase
             });
         });
 
-        Route::get('workbench/event-stream', static fn(): StreamedResponse => self::eventStream());
+        Route::get(
+            'workbench/event-stream/{shape}',
+            static fn(string $shape): StreamedResponse => self::eventStream($shape),
+        );
 
         Route::get('workbench/chunks-octane', static fn(): StreamedResponse => new StreamedResponse()->setCallback(
             static function (): Generator {
@@ -226,18 +231,46 @@ class StreamedResponseTest extends BaseTestCase
     }
 
     /**
+     * @return array<string, array{string, list<string>}>
+     */
+    public static function eventStreams(): array
+    {
+        $messages = [
+            "event: update\ndata: a\n\n",
+            "event: update\ndata: {\"b\":1}\n\n",
+            "event: tick\ndata: c\n\n",
+        ];
+
+        return [
+            'a generator function' => [
+                'generator',
+                [...$messages, "event: update\ndata: </stream>\n\n"],
+            ],
+            // eventStream() iterates what the callback returns, whatever it is; and the
+            // closing event is written out as it is, not as JSON the way a message is.
+            'a closure returning a generator' => [
+                'iterable',
+                [...$messages, "event: done\ndata: bye\n\n"],
+            ],
+        ];
+    }
+
+    /**
      * The events arrive one per chunk, and together they are the bytes Laravel's own
      * callback prints for the same messages: the framing, the JSON of a message that is not
      * a string, a named event and the closing one.
+     *
+     * @param list<string> $expectedChunks
      */
     #[Test]
-    public function laravelsEventStreamIsReadAnEventPerChunk(): void
+    #[DataProvider('eventStreams')]
+    public function laravelsEventStreamIsReadAnEventPerChunk(string $shape, array $expectedChunks): void
     {
-        $chunks = $this->readChunks('/workbench/event-stream');
+        $chunks = $this->readChunks('/workbench/event-stream/' . $shape);
 
         $printed = '';
 
-        $callback = self::eventStream()->getCallback();
+        $callback = self::eventStream($shape)->getCallback();
 
         self::assertNotNull($callback);
 
@@ -253,15 +286,7 @@ class StreamedResponseTest extends BaseTestCase
             ob_end_flush();
         }
 
-        self::assertSame(
-            [
-                "event: update\ndata: a\n\n",
-                "event: update\ndata: {\"b\":1}\n\n",
-                "event: tick\ndata: c\n\n",
-                "event: update\ndata: </stream>\n\n",
-            ],
-            $chunks,
-        );
+        self::assertSame($expectedChunks, $chunks);
         self::assertSame($printed, implode('', $chunks));
     }
 
@@ -511,22 +536,45 @@ class StreamedResponseTest extends BaseTestCase
         return $chunks;
     }
 
-    private static function eventStream(): StreamedResponse
+    private static function eventStream(string $shape): StreamedResponse
     {
         /** @var RoutingResponseFactory $responseFactory */
         $responseFactory = response();
 
-        return $responseFactory->eventStream(static function (): Generator {
-            yield 'a';
+        if ($shape === 'generator') {
+            return $responseFactory->eventStream(static function (): Generator {
+                yield from self::eventMessages();
+            });
+        }
 
-            Sleeper::usleep(1000);
+        return $responseFactory->eventStream(
+            callback: static fn(): Generator => self::eventMessages(),
+            endStreamWith: new StreamedEvent(
+                event: 'done',
+                data: new class implements Stringable {
+                    public function __toString(): string
+                    {
+                        return 'bye';
+                    }
+                },
+            ),
+        );
+    }
 
-            yield ['b' => 1];
-            yield new StreamedEvent(
-                event: 'tick',
-                data: 'c',
-            );
-        });
+    /**
+     * @return Generator<int, mixed>
+     */
+    private static function eventMessages(): Generator
+    {
+        yield 'a';
+
+        Sleeper::usleep(1000);
+
+        yield ['b' => 1];
+        yield new StreamedEvent(
+            event: 'tick',
+            data: 'c',
+        );
     }
 
     private static function recordTermination(): void

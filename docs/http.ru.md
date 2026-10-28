@@ -39,10 +39,11 @@
 - `new StreamedResponse($iterable)` из Symfony, в том числе наследник — iterable может быть
   генератором, массивом или любым `Traversable`;
 - `response()->stream(function () { yield …; })` из Laravel;
-- `response()->eventStream(function () { yield …; })` из Laravel — кусок на событие, с той
-  же разметкой, что у Laravel: строки `event:` и `data:`, сообщение, которое не строка и не
-  число, — в JSON, `StreamedEvent` — под своим именем события, и закрывающее событие
-  (по умолчанию `</stream>`) после последнего сообщения;
+- `response()->eventStream(function () { yield …; })` из Laravel, в том числе с колбэком,
+  который возвращает любой iterable, — кусок на событие, с той же разметкой, что у Laravel:
+  строки `event:` и `data:`, сообщение, которое не строка и не число, — в JSON,
+  `StreamedEvent` — под своим именем события, и закрывающее событие (по умолчанию
+  `</stream>`) после последнего сообщения, как есть;
 - `StreamedResponse`, колбэк которого сам является функцией-генератором
   (`->setCallback(fn () => yield …)`).
 

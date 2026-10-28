@@ -240,10 +240,12 @@ The `server` block of the `http` group.
 
 How the pool works is in [queue.md](queue.md).
 
-A worker of this group tells the master it is up before its consumer connects, after the
-`WorkerForked` listeners. A broker failure at the start — a queue that is not declared, a
-refused login — is therefore an ordinary restart with backoff, not a failed start, and does
-not stop the master; `SCONCUR_HTTP_READY_TIMEOUT_MS` does not reach it.
+A worker of this group tells the master it is up once the broker has taken its connection,
+before the consumer opens the queues. A queue that is not declared is therefore an ordinary
+restart with backoff and does not stop the master. A broker that cannot be reached or
+refuses the login, a `WorkerForked` listener that throws, or a config the consumer refuses
+fail before that point: they are failed starts, and when every slot fails that way the
+master stops with code `70`.
 
 | ENV | Default | What it does |
 |---|---|---|

@@ -40,10 +40,11 @@ Any of these (`src/Http/StreamedChunks.php`):
 - Symfony's `new StreamedResponse($iterable)`, a subclass included — the iterable may be a
   generator, an array or any `Traversable`;
 - Laravel's `response()->stream(function () { yield …; })`;
-- Laravel's `response()->eventStream(function () { yield …; })` — a chunk per event, framed
-  as Laravel frames it: `event:` and `data:` lines, a message that is not a string or a
-  number as JSON, a `StreamedEvent` under its own event name, and the closing event
-  (`</stream>` by default) after the last message;
+- Laravel's `response()->eventStream(function () { yield …; })`, or with a callback that
+  returns any iterable — a chunk per event, framed as Laravel frames it: `event:` and
+  `data:` lines, a message that is not a string or a number as JSON, a `StreamedEvent` under
+  its own event name, and the closing event (`</stream>` by default) after the last message,
+  written out as it is;
 - a `StreamedResponse` whose callback is itself a generator function
   (`->setCallback(fn () => yield …)`).
 

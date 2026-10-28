@@ -28,8 +28,18 @@ class ExtensionLoadCommand extends AbstractSconcurCommand
 
             // The default names a directory, and the downloader takes a path that is not
             // one for the file to write: servers/sconcur would become the .so itself, or
-            // fail without servers/.
-            if (!is_dir($target) && !@mkdir($target, 0755, true) && !is_dir($target)) {
+            // fail without servers/. A file already there is such a .so, written by a
+            // version of this command that did not create the directory.
+            if (file_exists($target) && !is_dir($target)) {
+                $this->error(sprintf(
+                    '%s is a file, not a directory: remove it, or pass the target as the argument',
+                    $target,
+                ));
+
+                return self::FAILURE;
+            }
+
+            if (!is_dir($target) && !mkdir($target, 0755, true) && !is_dir($target)) {
                 $this->error(sprintf('Cannot create the directory %s', $target));
 
                 return self::FAILURE;

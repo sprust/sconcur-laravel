@@ -25,9 +25,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  *   iterable it keeps as `$chunks`;
  * - Laravel's `response()->stream(fn () => yield …)`: the callback echoes the generator
  *   function it keeps as `$callback`;
- * - Laravel's `response()->eventStream(fn () => yield …)`: the same, with `$endStreamWith`
- *   beside it, and every message echoed as a server-sent event. The chunks are the events,
- *   framed the way that callback frames them.
+ * - Laravel's `response()->eventStream(…)`: the callback it was given kept as `$callback`
+ *   too, with `$endStreamWith` beside it, and every message echoed as a server-sent event.
+ *   That callback need not be a generator function — eventStream() iterates whatever it
+ *   returns. The chunks are the events, framed the way eventStream() frames them.
  *
  * The last three are read out of the closure's variables, which ties them to how Symfony and
  * Laravel write those closures. A shape that is not recognised is not an error: the
@@ -65,22 +66,23 @@ class StreamedChunks
             return static fn(): iterable => $chunks;
         }
 
-        $generatorFunction = $variables['callback'] ?? null;
+        $messages = $variables['callback'] ?? null;
 
-        if (is_a($scope, ResponseFactory::class, true)
-            && $generatorFunction instanceof Closure
-            && new ReflectionFunction($generatorFunction)->isGenerator()
-        ) {
-            if (array_key_exists('endStreamWith', $variables)) {
-                $endStreamWith = $variables['endStreamWith'];
+        if (!is_a($scope, ResponseFactory::class, true) || !$messages instanceof Closure) {
+            return null;
+        }
 
-                return static fn(): iterable => static::events(
-                    generatorFunction: $generatorFunction,
-                    endStreamWith: $endStreamWith,
-                );
-            }
+        if (array_key_exists('endStreamWith', $variables)) {
+            $endStreamWith = $variables['endStreamWith'];
 
-            return static fn(): iterable => $generatorFunction();
+            return static fn(): iterable => static::events(
+                messages: $messages,
+                endStreamWith: $endStreamWith,
+            );
+        }
+
+        if (new ReflectionFunction($messages)->isGenerator()) {
+            return static fn(): iterable => $messages();
         }
 
         return null;
@@ -88,22 +90,29 @@ class StreamedChunks
 
     /**
      * What ResponseFactory::eventStream() echoes, an event per chunk: every message, then
-     * the closing one unless it is blank.
+     * the closing one unless it is blank. A message that is not a string or a number goes
+     * out as JSON; the closing one is written out as it is, as eventStream() writes it.
      *
      * @return Generator<int, string>
      */
-    protected static function events(Closure $generatorFunction, mixed $endStreamWith): Generator
+    protected static function events(Closure $messages, mixed $endStreamWith): Generator
     {
-        foreach ($generatorFunction() as $message) {
-            yield static::event($message);
+        foreach ($messages() as $message) {
+            yield static::event(
+                message: $message,
+                encode: true,
+            );
         }
 
         if (filled($endStreamWith)) {
-            yield static::event($endStreamWith);
+            yield static::event(
+                message: $endStreamWith,
+                encode: false,
+            );
         }
     }
 
-    protected static function event(mixed $message): string
+    protected static function event(mixed $message, bool $encode): string
     {
         $event = 'update';
 
@@ -112,7 +121,7 @@ class StreamedChunks
             $message = $message->data;
         }
 
-        if (!is_string($message) && !is_numeric($message)) {
+        if ($encode && !is_string($message) && !is_numeric($message)) {
             $message = Js::encode($message);
         }
 

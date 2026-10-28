@@ -13,7 +13,6 @@ use SConcur\Laravel\Queue\Rabbitmq\ConsumerRunner;
 use SConcur\Laravel\Servers\Events\WorkerForked;
 use SConcur\Laravel\Tasks\TaskPool;
 use SConcur\Laravel\Ws\WsServerRunner;
-use SConcur\Scheduler\Scheduler;
 use SConcur\Worker\WorkerContext;
 
 /**
@@ -73,12 +72,6 @@ readonly class WorkerRoles
                 )->run($app);
             },
             WorkerRoleEnum::Rabbitmq => static function () use ($app, $serverArgs): void {
-                // Said before the consumer opens, not by its first wait: the broker refuses
-                // a queue nobody declared within a millisecond, and every slot failing
-                // before it is up would stop the master and every other group with it. As a
-                // worker that came up, it is restarted with a growing backoff instead.
-                Scheduler::get()->markReady();
-
                 ConsumerRunner::configured(
                     consumer: QueueConsumer::fromArgs($serverArgs),
                 )->run($app);

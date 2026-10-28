@@ -29,9 +29,12 @@ What happens if it is skipped:
   `Server channel error: 404, message: NOT_FOUND - no queue 'default' in vhost '/'`.
   The first open is not retried: the worker exits non-zero, and the master starts it again
   with a growing pause, up to `maxRestartBackoffMs`, for as long as the queue is missing.
-  The `rabbitmq` role tells the master it is up before the consumer opens, so this failure
-  is an ordinary restart rather than a failed start: the master and its other groups, HTTP
-  included, keep running, and the broker's error shows only in the worker's log.
+  The `rabbitmq` worker tells the master it is up once the broker has taken its connection,
+  before the consumer opens the queues, so this failure is an ordinary restart rather than a
+  failed start: the master and its other groups, HTTP included, keep running, and the
+  broker's error shows only in the worker's log. A broker that cannot be reached or refuses
+  the login is still a failed start
+  ([configuration.md](configuration.md#the-rabbitmq-group-and-its-consumers)).
 
 The command declares what is listed in `sconcur.queue.rabbitmq.queues`, with the flags
 `durable`, not `exclusive`, not `autoDelete` and no arguments — the same ones

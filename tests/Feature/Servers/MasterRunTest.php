@@ -123,6 +123,24 @@ class MasterRunTest extends BaseTestCase
         self::assertGreaterThan(0, $this->httpStatusCode());
     }
 
+    /**
+     * The other half of the same line: the `rabbitmq` role says it is up only once the broker
+     * took the connection, so a login the broker refuses is still a failed start, and a
+     * group that cannot come up at all still stops the master with the code an
+     * orchestrator acts on.
+     */
+    #[Test]
+    public function aBrokerThatRefusesTheLoginStopsTheMaster(): void
+    {
+        $this->startMaster([
+            'SCONCUR_RABBITMQ_WORKER_COUNT' => '1',
+            'SCONCUR_RABBITMQ_DSN'          => 'amqp://scl_user:wrong-password@scl-rabbitmq:5672/%2f',
+        ]);
+
+        self::assertSame(70, $this->exitCode(), (string) file_get_contents($this->output));
+        self::assertStringContainsString('group rabbitmq: no worker came up', (string) file_get_contents($this->output));
+    }
+
     #[Test]
     public function aMasterThatDoesNotRunIsReportedAsStopped(): void
     {

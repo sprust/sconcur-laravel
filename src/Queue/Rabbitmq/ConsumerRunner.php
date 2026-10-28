@@ -17,6 +17,7 @@ use SConcur\Exceptions\CoroutineTimeoutException;
 use SConcur\Exceptions\FlowStoppedException;
 use SConcur\Features\Amqp\Consumer\QueueConsumer;
 use SConcur\Features\Amqp\Delivery;
+use SConcur\Scheduler\Scheduler;
 use Throwable;
 
 /**
@@ -91,8 +92,21 @@ readonly class ConsumerRunner
 
         $this->logFailedJobs($app);
 
+        $connection = $queue->getConnection();
+
+        // Up once the broker took the connection, not at the consumer's first wait: the
+        // broker refuses a queue nobody declared within a millisecond, and every slot
+        // failing before it is up would stop the master and every other group with it. A
+        // missing queue is therefore a restart with backoff, while a broker that cannot be
+        // reached or refuses the login is still a failed start. A no-op without a master.
+        if (!$connection->isOpen()) {
+            $connection->connect();
+        }
+
+        Scheduler::get()->markReady();
+
         return $this->consumer->consume(
-            connection: $queue->getConnection(),
+            connection: $connection,
             handler: function (Delivery $delivery) use ($queue, $worker, $exceptions): void {
                 $job = new Job(
                     // The contract's Application is not the concrete Container the base
